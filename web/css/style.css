@@ -1,0 +1,394 @@
+/**
+ * 统一样式配置
+ * 所有颜色、尺寸、字体均通过 CSS 变量定义
+ * 禁止在组件中硬编码样式值
+ */
+
+/* ============================================================================
+   CSS 变量定义
+   所有布局、颜色、尺寸均通过变量定义，便于后期大幅修改
+   ============================================================================ */
+:root {
+    /* ========== 布局变量 ========== */
+    /* 主布局：左右列宽度比例 */
+    --layout-left-column-ratio: 1.3fr;
+    --layout-right-column-ratio: 1fr;
+    --layout-max-width: 1600px;
+    --layout-gap: 16px;
+
+    /* 控制面板区域：控制面板与占位区比例 */
+    --layout-control-ratio: 1.5fr;
+    --layout-placeholder-ratio: 1fr;
+
+    /* ========== 配色方案：纯黑白 ========== */
+    --color-bg: #000000;
+    --color-surface: #0a0a0a;
+    --color-surface-hover: #1a1a1a;
+    --color-border: #2a2a2a;
+    --color-border-light: #3a3a3a;
+
+    /* 文字颜色 */
+    --color-text-primary: #ffffff;
+    --color-text-secondary: #888888;
+    --color-text-muted: #555555;
+
+    /* ========== 粒子颜色 ========== */
+    /* 反应物 A - 红色 */
+    --color-particle-a-hue: 0;
+    --color-particle-a-saturation: 100%;
+    --color-particle-a-base-lightness: 50%;
+
+    /* 产物 B - 蓝色 */
+    --color-particle-b-hue: 220;
+    --color-particle-b-saturation: 100%;
+    --color-particle-b-base-lightness: 50%;
+
+    /* 能量-亮度映射参数 */
+    --energy-min-lightness: 20%;
+    --energy-max-lightness: 100%;
+
+    /* ========== 曲线颜色（与粒子一致）========== */
+    --color-curve-reactant: hsl(var(--color-particle-a-hue), var(--color-particle-a-saturation), var(--color-particle-a-base-lightness));
+    --color-curve-product: hsl(var(--color-particle-b-hue), var(--color-particle-b-saturation), var(--color-particle-b-base-lightness));
+    --color-curve-theory: #666666;
+    --color-curve-rate: #ffffff;
+
+    /* ========== UI 尺寸 ========== */
+    --border-radius: 12px;
+    --border-radius-sm: 8px;
+    --spacing-xs: 4px;
+    --spacing-sm: 8px;
+    --spacing-md: 16px;
+    --spacing-lg: 24px;
+    --spacing-xl: 32px;
+
+    /* ========== 字体 ========== */
+    --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-size-xs: 10px;
+    --font-size-sm: 12px;
+    --font-size-md: 14px;
+    --font-size-lg: 16px;
+    --font-size-xl: 18px;
+
+    /* ========== 线条 ========== */
+    --line-width-thin: 1px;
+    --line-width-normal: 2px;
+
+    /* ========== 动画 ========== */
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s ease;
+}
+
+/* ============================================================================
+   基础重置
+   ============================================================================ */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    background-color: var(--color-bg);
+    color: var(--color-text-primary);
+    font-family: var(--font-family);
+    font-size: var(--font-size-md);
+    line-height: 1.5;
+    min-height: 100vh;
+    overflow: hidden;
+}
+
+/* ============================================================================
+   布局
+   ============================================================================ */
+.app-container {
+    display: grid;
+    grid-template-columns: var(--layout-left-column-ratio) var(--layout-right-column-ratio);
+    gap: var(--layout-gap);
+    padding: var(--layout-gap);
+    height: 100vh;
+    max-width: var(--layout-max-width);
+    margin: 0 auto;
+}
+
+.left-column,
+.right-column {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    min-height: 0;
+    /* 关键：允许 flex 子项收缩 */
+    overflow: hidden;
+}
+
+.top-row {
+    display: grid;
+    grid-template-columns: var(--layout-control-ratio) var(--layout-placeholder-ratio);
+    gap: var(--layout-gap);
+}
+
+/* ============================================================================
+   面板通用样式
+   ============================================================================ */
+.panel {
+    background-color: var(--color-surface);
+    border: var(--line-width-thin) solid var(--color-border);
+    border-radius: var(--border-radius);
+    padding: var(--spacing-md);
+    display: flex;
+    flex-direction: column;
+}
+
+.panel-title {
+    font-size: var(--font-size-lg);
+    font-weight: 500;
+    color: var(--color-text-primary);
+    margin-bottom: var(--spacing-md);
+    padding-bottom: var(--spacing-sm);
+    border-bottom: var(--line-width-thin) solid var(--color-border);
+}
+
+/* ============================================================================
+   控制面板
+   ============================================================================ */
+.control-panel {
+    min-height: 180px;
+}
+
+.controls-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    margin-bottom: var(--spacing-lg);
+}
+
+/* 滑块样式 */
+.slider-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-xs);
+}
+
+.slider-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+
+.slider-value {
+    font-weight: 500;
+    color: var(--color-text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 4px;
+    background: var(--color-border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+}
+
+.slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 16px;
+    height: 16px;
+    background: var(--color-text-primary);
+    border-radius: 50%;
+    cursor: pointer;
+    transition: transform var(--transition-fast);
+}
+
+.slider::-webkit-slider-thumb:hover {
+    transform: scale(1.15);
+}
+
+.slider::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    background: var(--color-text-primary);
+    border: none;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+/* 按钮样式 */
+.button-group {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.btn {
+    flex: 1;
+    background-color: var(--color-surface);
+    border: var(--line-width-thin) solid var(--color-border);
+    border-radius: var(--border-radius-sm);
+    color: var(--color-text-primary);
+    font-family: var(--font-family);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
+    padding: var(--spacing-sm) var(--spacing-md);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.btn:hover {
+    background-color: var(--color-surface-hover);
+    border-color: var(--color-border-light);
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+.btn.active {
+    background-color: var(--color-text-primary);
+    color: var(--color-bg);
+}
+
+/* ============================================================================
+   占位面板
+   ============================================================================ */
+.placeholder-panel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 180px;
+}
+
+.secondary-text {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-sm);
+}
+
+/* ============================================================================
+   模拟显示面板
+   ============================================================================ */
+.simulation-panel {
+    flex: 1;
+    min-height: 0;
+    /* 关键：允许收缩以适应容器 */
+    display: flex;
+    flex-direction: column;
+}
+
+.canvas-container {
+    flex: 1;
+    display: flex;
+    align-items: stretch;
+    justify-content: stretch;
+    background-color: var(--color-bg);
+    border-radius: var(--border-radius-sm);
+    overflow: hidden;
+    min-height: 0;
+    /* 移除固定最小高度，允许收缩 */
+}
+
+.canvas-container canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.simulation-stats {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   图表面板
+   ============================================================================ */
+.chart-panel {
+    flex: 1;
+    min-height: 0;
+    /* 允许收缩 */
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-panel .canvas-container {
+    min-height: 0;
+    /* 移除固定最小高度 */
+}
+
+.chart-legend {
+    display: flex;
+    gap: var(--spacing-lg);
+    margin-top: var(--spacing-sm);
+    justify-content: center;
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+}
+
+.legend-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
+.legend-dot.simulation {
+    background-color: var(--color-curve-product);
+}
+
+.legend-dot.theory {
+    background-color: var(--color-curve-theory);
+}
+
+.legend-dot.reactant {
+    background-color: var(--color-curve-reactant);
+}
+
+.legend-dot.product {
+    background-color: var(--color-curve-product);
+}
+
+.chart-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: var(--spacing-sm);
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================================
+   响应式
+   ============================================================================ */
+@media (max-width: 1200px) {
+    .app-container {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .left-column,
+    .right-column {
+        width: 100%;
+    }
+}

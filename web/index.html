@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>化学反应粒子模拟器</title>
+    <meta name="description" content="基于 Arrhenius 动力学的化学反应粒子模拟器，支持实时参数调节和可视化">
+
+    <!-- 字体 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+
+    <!-- 样式 -->
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- 左侧列 -->
+        <div class="left-column">
+            <!-- 上半部分: 控制面板 + 暂留区 -->
+            <div class="top-row">
+                <!-- 控制面板 -->
+                <div class="panel control-panel" id="control-panel">
+                    <h3 class="panel-title">控制面板</h3>
+
+                    <div class="controls-grid">
+                        <!-- 温度滑块 (开尔文) -->
+                        <div class="slider-container">
+                            <label class="slider-label">
+                                <span>温度 T (K)</span>
+                                <span class="slider-value" id="temp-value">300</span>
+                            </label>
+                            <input type="range" class="slider" id="temp-slider" min="200" max="500" step="10"
+                                value="300">
+                        </div>
+
+                        <!-- 活化能滑块 -->
+                        <div class="slider-container">
+                            <label class="slider-label">
+                                <span>活化能 Ea</span>
+                                <span class="slider-value" id="ea-value">10</span>
+                            </label>
+                            <input type="range" class="slider" id="ea-slider" min="1" max="100" step="1" value="10">
+                        </div>
+                    </div>
+
+                    <!-- 控制按钮 -->
+                    <div class="button-group">
+                        <button class="btn" id="btn-start">启动</button>
+                        <button class="btn" id="btn-pause">暂停</button>
+                        <button class="btn" id="btn-reset">重置</button>
+                    </div>
+                </div>
+
+                <!-- 暂时留空区域 -->
+                <div class="panel placeholder-panel">
+                    <span class="secondary-text">暂时留空</span>
+                </div>
+            </div>
+
+            <!-- 下半部分: 模拟显示 -->
+            <div class="panel simulation-panel">
+                <h3 class="panel-title">模拟显示</h3>
+                <div class="canvas-container">
+                    <canvas id="simulation-canvas"></canvas>
+                </div>
+                <div class="simulation-stats">
+                    <span id="stats-time">时间: 0.00</span>
+                    <span id="stats-fps">FPS: --</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧列 -->
+        <div class="right-column">
+            <!-- 反应速率图 -->
+            <div class="panel chart-panel">
+                <h3 class="panel-title">反应速率图</h3>
+                <div class="canvas-container">
+                    <canvas id="rate-chart"></canvas>
+                </div>
+                <div class="chart-info">
+                    <span id="rate-current">当前速率: --</span>
+                    <span id="rate-k">k = --</span>
+                </div>
+            </div>
+
+            <!-- 物质浓度时变图 -->
+            <div class="panel chart-panel">
+                <h3 class="panel-title">物质浓度时变图</h3>
+                <div class="canvas-container">
+                    <canvas id="concentration-chart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <span class="legend-dot reactant"></span>
+                        <span>反应物 [A]</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot product"></span>
+                        <span>产物 [B]</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-dot theory"></span>
+                        <span>[B] 理论</span>
+                    </div>
+                </div>
+                <div class="chart-info">
+                    <span id="concentration-a">[A] = --</span>
+                    <span id="concentration-p">[B] = --</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.IO -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
+    <!-- 应用脚本 -->
+    <script type="module" src="js/main.js"></script>
+</body>
+
+</html>
