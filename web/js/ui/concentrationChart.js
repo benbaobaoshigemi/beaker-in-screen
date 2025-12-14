@@ -113,11 +113,14 @@ export class ConcentrationChart {
         ctx.lineTo(width - padding.RIGHT, plotOriginY);
         ctx.stroke();
 
-        // Y 轴固定范围
+        // Y 轴固定范围（浓度）
         const yMin = CONFIG.CHART.CONCENTRATION.Y_MIN;
         const yMax = CONFIG.CHART.CONCENTRATION.Y_MAX;
 
-        // 绘制 Y 轴刻度
+        // 反应商 Q 的范围 (0 到 ∞，我们用对数刻度不合适，用线性 0-10)
+        const qMax = 10;
+
+        // 绘制左侧 Y 轴刻度（浓度）
         ctx.fillStyle = colors.textMuted;
         ctx.font = '10px Inter, sans-serif';
         ctx.textAlign = 'right';
@@ -138,100 +141,95 @@ export class ConcentrationChart {
             ctx.globalAlpha = 1.0;
         });
 
+        // 绘制右侧 Y 轴刻度（反应商 Q = [B]/[A]）
+        ctx.fillStyle = '#ffffff';  // 白色
+        ctx.textAlign = 'left';
+        const qTicks = [0, 2, 4, 6, 8, 10];
+        qTicks.forEach(tick => {
+            const y = plotOriginY - (tick / qMax) * plotHeight;
+            ctx.fillText(tick.toString(), width - padding.RIGHT + 5, y);
+        });
+
+        // 右侧 Y 轴标签
+        ctx.save();
+        ctx.translate(width - 5, height / 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.textAlign = 'center';
+        ctx.fillText('Q = [B]/[A]', 0, 0);
+        ctx.restore();
+
         if (this.data.length < 2) {
+            // 数据不足时仍显示坐标轴，不绘制曲线
             return;
         }
 
         // 计算滚动偏移
+        // 时间窗口计算
         const visiblePoints = CONFIG.CHART.X_AXIS_VISIBLE_POINTS;
         const scrollOffset = Math.max(0, this.data.length - visiblePoints);
         const visibleData = this.data.slice(scrollOffset);
 
-        // X 轴范围
-        const xPointCount = Math.min(visibleData.length, visiblePoints);
+        if (visibleData.length < 2) return;
+
+        // 获取当前可视的时间范围
+        const tStart = visibleData[0].time;
+        const tEnd = visibleData[visibleData.length - 1].time;
+        const timeSpan = tEnd - tStart;
+
+        // 如果时间跨度太小，避免除零
+        if (timeSpan < 1e-9) return;
+
+        // Plot 宽度映射到时间跨度
+        const pxPerSec = plotWidth / timeSpan;
 
         /**
-         * 绘制曲线
+         * 通用曲线绘制函数 (时间映射)
          */
-        const drawCurve = (getValue, color, dashed = false) => {
+        const drawTimeBasedCurve = (dataPoints, getValue, color, dashed = false, yMaxVal = yMax) => {
             ctx.strokeStyle = color;
             ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
-
-            if (dashed) {
-                ctx.setLineDash([4, 4]);
-            } else {
-                ctx.setLineDash([]);
-            }
+            if (dashed) ctx.setLineDash([4, 4]);
+            else ctx.setLineDash([]);
 
             ctx.beginPath();
 
-            for (let i = 0; i < visibleData.length; i++) {
-                const point = visibleData[i];
+            let firstPoint = true;
+            for (const point of dataPoints) {
+                // X 坐标严格基于点的时间戳
+                const t = point.time;
+                if (t < tStart || t > tEnd) continue;
+
+                const x = plotOriginX + (t - tStart) * pxPerSec;
                 const value = getValue(point);
+                const y = plotOriginY - (value / yMaxVal) * plotHeight;
 
-                const x = plotOriginX + (i / visiblePoints) * plotWidth;
-                const y = plotOriginY - (value / yMax) * plotHeight;
+                // 简单的边界保护
+                if (x < plotOriginX - 10) continue;
+                if (x > width + 10) break;
 
-                if (i === 0) {
+                if (firstPoint) {
                     ctx.moveTo(x, y);
+                    firstPoint = false;
                 } else {
                     ctx.lineTo(x, y);
                 }
             }
-
             ctx.stroke();
             ctx.setLineDash([]);
         };
 
-        // 绘制反应物曲线（实线，红色）- 直接显示 A
-        drawCurve(p => p.reactant, curveColors.reactant, false);
+        // 1. 绘制实际数据 (A 和 B)
+        drawTimeBasedCurve(visibleData, p => p.reactant, curveColors.reactant, false);
+        drawTimeBasedCurve(visibleData, p => p.product, curveColors.product, false);
 
-        // 绘制产物曲线（实线，蓝色）- 直接显示 B
-        drawCurve(p => p.product, curveColors.product, false);
-
-        // 绘制预计算理论曲线（虚线）
-        // 理论曲线在启动时就完整生成，固定显示
-        const theoryCurve = stateManager.getState().chartData.theoryCurve;
-        if (theoryCurve && theoryCurve.length >= 2 && visibleData.length >= 2) {
-            ctx.strokeStyle = curveColors.theory;
-            ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
-            ctx.setLineDash([4, 4]);
-            ctx.beginPath();
-
-            // 动态对齐：基于实际数据的当前时间窗口计算映射关系
-            const tStart = visibleData[0].time;
-            const tEnd = visibleData[visibleData.length - 1].time;
-            const timeSpan = tEnd - tStart;
-
-            // 如果时间跨度太小（刚开始），则跳过或使用默认
-            if (timeSpan > 0.001) {
-                // 计算 x 轴的时间缩放比例 (pixels per second)
-                // 实际数据占据的宽度
-                const dataWidth = (visibleData.length - 1) / visiblePoints * plotWidth;
-                const pxPerSec = dataWidth / timeSpan;
-
-                let firstPoint = true;
-                for (const point of theoryCurve) {
-                    // 计算 x 坐标：相对于当前窗口起始时间的偏移
-                    const timeOffset = point.time - tStart;
-                    const x = plotOriginX + timeOffset * pxPerSec;
-
-                    // 性能优化：只绘制在显示范围附近的点
-                    if (x < plotOriginX - 10 || x > width) continue;
-
-                    const y = plotOriginY - (point.product / yMax) * plotHeight;
-
-                    if (firstPoint) {
-                        ctx.moveTo(x, y);
-                        firstPoint = false;
-                    } else {
-                        ctx.lineTo(x, y);
-                    }
-                }
-                ctx.stroke();
+        // 2. 绘制反应商曲线 (Q = [B]/[A], 白色, 使用右侧 Y 轴)
+        const getQ = (point) => {
+            if (point.reactant > 0) {
+                return Math.min(point.product / point.reactant, qMax);  // 限制最大值
             }
-
-            ctx.setLineDash([]);
-        }
+            return qMax;  // A=0 时 Q=∞，显示为最大值
+        };
+        drawTimeBasedCurve(visibleData, getQ, '#ffffff', false, qMax);
     }
 }
+

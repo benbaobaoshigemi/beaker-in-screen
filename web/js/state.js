@@ -7,10 +7,22 @@ class StateManager {
     constructor() {
         // 状态存储
         this.state = {
-            // 模拟配置
+            // 模拟配置（可逆反应）
             config: {
-                temperature: 3.0,
-                activationEnergy: 0.5,
+                temperature: 300.0,
+                // 可逆反应参数
+                radiusA: 0.3,
+                radiusB: 0.3,
+                initialCountA: 10000,
+                initialCountB: 0,
+                eaForward: 30,
+                eaReverse: 30,
+                // 锁定状态
+                propertiesLocked: false,
+                // 半衰期
+                halfLifeForward: null,
+                halfLifeReverse: null,
+                // 兼容
                 numParticles: 10000,
             },
 
@@ -28,8 +40,8 @@ class StateManager {
             concentration: {
                 reactantCount: 10000,
                 productCount: 0,
-                theoryValue: 0,
-                kEstimated: null,
+                halfLifeForward: null,
+                halfLifeReverse: null,
             },
 
             // 图表历史数据
@@ -38,19 +50,12 @@ class StateManager {
                 concentrationHistory: [],
                 // 速率曲线数据
                 rateHistory: [],
-                // 预计算理论曲线（启动时一次性生成）
-                theoryCurve: [],
             },
 
-            // 预埋：多组分支持
+            // 组分列表
             components: [
                 { id: 'A', name: '反应物 A', count: 10000 },
-                { id: 'P', name: '产物 P', count: 0 },
-            ],
-
-            // 预埋：反应列表
-            reactions: [
-                { type: 'A+A->P+P', rate: 0 },
+                { id: 'B', name: '产物 B', count: 0 },
             ],
         };
 
@@ -127,50 +132,72 @@ class StateManager {
         // 更新粒子
         this.update('particles', serverState.particles);
 
-        // 更新浓度
+        // 更新浓度（含半衰期）
         const concentration = {
             reactantCount: serverState.reactantCount,
             productCount: serverState.productCount,
-            theoryValue: serverState.theoryValue,
-            kEstimated: serverState.kEstimated,
+            halfLifeForward: serverState.halfLifeForward,
+            halfLifeReverse: serverState.halfLifeReverse,
         };
         this.update('concentration', concentration);
 
-        // 计算反应速率 (dP/dt)
+        // 计算反应速率
         const dt = serverState.time - this.lastTime;
-        let rate = 0;
-        if (dt > 0) {
-            rate = (serverState.productCount - this.lastProductCount) / dt;
+
+        // 正反应速率: A减少的速率 (正值表示正反应发生)
+        // 逆反应速率: A增加的速率 (正值表示逆反应发生)
+        let forwardRate = 0;
+        let reverseRate = 0;
+
+        if (dt > 0 && this.lastReactantCount !== undefined) {
+            const dA = serverState.reactantCount - this.lastReactantCount;
+            if (dA < 0) {
+                // A 减少 -> 正反应
+                forwardRate = -dA / dt;
+            } else if (dA > 0) {
+                // A 增加 -> 逆反应
+                reverseRate = dA / dt;
+            }
         }
+
+        this.lastReactantCount = serverState.reactantCount;
         this.lastProductCount = serverState.productCount;
         this.lastTime = serverState.time;
 
-        // 速率平滑：使用移动平均
-        if (!this.rateHistory) {
-            this.rateHistory = [];
+        // 速率平滑：使用移动平均（增大窗口提高平滑度）
+        if (!this.forwardRateHistory) {
+            this.forwardRateHistory = [];
+            this.reverseRateHistory = [];
         }
-        this.rateHistory.push(rate);
-        const smoothWindow = 5;  // 5点移动平均
-        if (this.rateHistory.length > smoothWindow) {
-            this.rateHistory.shift();
+        this.forwardRateHistory.push(forwardRate);
+        this.reverseRateHistory.push(reverseRate);
+
+        const smoothWindow = 15;  // 15点移动平均（增大以提高平滑度）
+        if (this.forwardRateHistory.length > smoothWindow) {
+            this.forwardRateHistory.shift();
         }
-        const smoothedRate = this.rateHistory.reduce((a, b) => a + b, 0) / this.rateHistory.length;
+        if (this.reverseRateHistory.length > smoothWindow) {
+            this.reverseRateHistory.shift();
+        }
+
+        const smoothedForward = this.forwardRateHistory.reduce((a, b) => a + b, 0) / this.forwardRateHistory.length;
+        const smoothedReverse = this.reverseRateHistory.reduce((a, b) => a + b, 0) / this.reverseRateHistory.length;
 
         // 更新图表数据
         const chartData = this.state.chartData;
 
-        // 添加浓度历史点（包含反应物和产物）
+        // 添加浓度历史点
         chartData.concentrationHistory.push({
             time: serverState.time,
-            reactant: serverState.reactantCount,  // 反应物 A
-            product: serverState.productCount,     // 产物 B
-            theory: serverState.theoryValue,
+            reactant: serverState.reactantCount,
+            product: serverState.productCount,
         });
 
-        // 添加速率历史点（使用平滑后的值）
+        // 添加速率历史点（正反应和逆反应分开）
         chartData.rateHistory.push({
             time: serverState.time,
-            value: Math.max(0, smoothedRate),
+            forward: Math.max(0, smoothedForward),
+            reverse: Math.max(0, smoothedReverse),
         });
 
         // 限制历史长度
@@ -186,17 +213,47 @@ class StateManager {
     }
 
     /**
-     * 生成预计算理论曲线（二级反应动力学）
-     * 在模拟启动时调用，一次性生成完整理论曲线
+     * 计算绝对理论速率常数 k (基于硬球碰撞理论)
+     * Hard Sphere Collision Theory: k = σ * v_rel * exp(-Ea/kT) / V
+     * 
+     * Constants (Must match config.py):
+     * R = 0.3
+     * Box = 40.0
+     * Mass = 1.0
+     * Kb = 0.1
      */
-    generateTheoryCurve(k, numParticles, maxTime = 60) {
-        // 保存基准参数，用于后续动态调整
-        this.baseParams = {
-            k: k,
-            temp: this.state.config.temperature,
-            ea: this.state.config.activationEnergy,
-            kb: 0.1 // 固定的玻尔兹曼常数
-        };
+    calculateTheoreticalK(T, Ea) {
+        // 动态获取当前配置的半径
+        // R 越大 -> Sigma 越大 -> A 越大 -> k 越大
+        const R = this.state.config.particleRadius || 0.3; // Default fallback
+        const BOX_SIZE = 40.0; // Volume = 40^3 = 64000
+        const MASS = 1.0;
+        const KB = 0.1;
+
+        const Volume = BOX_SIZE * BOX_SIZE * BOX_SIZE;
+
+        // 1. 碰撞截面 σ = 4πR^2
+        const sigma = 4 * Math.PI * R * R;
+        const v_rel = 4 * Math.sqrt((KB * T) / (Math.PI * MASS));
+        const arrhenius = Math.exp(-Ea / (KB * T));
+
+        // 移除校准因子，回归纯理论公式
+        const k_count = (sigma * v_rel * arrhenius) / Volume;
+
+        return k_count;
+    }
+
+    /**
+     * 生成预计算理论曲线
+     * 忽略传入的 k (估算值)，强制使用理论计算值
+     */
+    generateTheoryCurve(ignoredK, numParticles, maxTime = 60) {
+        const T = this.state.config.temperature;
+        const Ea = this.state.config.activationEnergy;
+        // 强制使用绝对理论计算
+        const k = this.calculateTheoreticalK(T, Ea);
+
+        console.log(`[Theory] Absolute k calculated: ${k.toExponential(4)} (vs Estimated: ${ignoredK?.toExponential(4)})`);
 
         const theoryCurve = [];
         const A0 = numParticles;
@@ -216,36 +273,23 @@ class StateManager {
 
         this.state.chartData.theoryCurve = theoryCurve;
         this.notify('chartData');
-        console.log(`[StateManager] Theory curve generated with k=${k.toExponential(3)}, ${theoryCurve.length} points`);
     }
 
     /**
      * 更新理论曲线（响应温度变化）
-     * 严格基于 Arrhenius 方程预测
-     * 用户要求："让K被'设置'，渲染跟着设置走"
-     * 
-     * 逻辑：
-     * 1. 严格使用基准参数 (k0, T0) 和当前设置 (T_new) 计算新的理论 K。
-     * 2. 不进行任何基于"历史实际速率"的自适应校准（避免逻辑混淆）。
-     * 3. 曲线从当前实际浓度 [A]_current 开始延伸，展示"如果按照当前设置运行，未来的理论轨迹"。
+     * 严格基于 Arrhenius 方程和硬球理论预测
+     * 直接计算新 T 下的绝对 k 值
      */
     updateTheoryCurve(newTemp) {
-        if (!this.baseParams) return;
-
-        const { k: k0, temp: T0, ea: Ea, kb } = this.baseParams;
-        const T1 = newTemp;
-
-        // 阿伦尼乌斯缩放: k1 / k0 = sqrt(T1/T0) * exp(-Ea/kb * (1/T1 - 1/T0))
-        const preExponential = Math.sqrt(T1 / T0);
-        const exponential = Math.exp((-Ea / kb) * (1 / T1 - 1 / T0));
-        const k1 = k0 * preExponential * exponential;
+        const Ea = this.state.config.activationEnergy;
+        const k_new = this.calculateTheoreticalK(newTemp, Ea);
 
         // 获取当前实际状态作为起点
         const currentTime = this.state.simulation.time;
         const currentA = this.state.concentration.reactantCount;
 
         // 构建新曲线：
-        // 1. 历史部分：保留历史实际轨迹（视觉上的诚实）
+        // 1. 历史部分：保留历史实际轨迹
         const history = this.state.chartData.concentrationHistory
             .filter(p => p.time <= currentTime)
             .map(p => ({
@@ -256,18 +300,17 @@ class StateManager {
 
         const newCurve = [...history];
 
-        // 2. 未来部分：基于计算出的 k1 进行纯理论预测
+        // 2. 未来部分
         let A_t = currentA;
         const startT = currentTime;
         const maxTime = Math.max(60, startT + 50);
         const step = 0.1;
 
-        // 二级反应积分: 1/[A] - 1/[A]0 = k * t
         const invA_start = 1 / A_t;
 
         for (let t = startT + step; t <= maxTime; t += step) {
             const dt_accum = t - startT;
-            const A_pred = 1 / (invA_start + k1 * dt_accum);
+            const A_pred = 1 / (invA_start + k_new * dt_accum);
             const B_pred = (this.state.config.numParticles - A_pred) / 2;
 
             newCurve.push({
@@ -288,19 +331,21 @@ class StateManager {
         this.state.simulation.time = 0;
         this.state.particles = [];
         this.state.concentration = {
-            reactantCount: this.state.config.numParticles,
-            productCount: 0,
-            theoryValue: 0,
-            kEstimated: null,
+            reactantCount: this.state.config.initialCountA || this.state.config.numParticles,
+            productCount: this.state.config.initialCountB || 0,
+            halfLifeForward: null,
+            halfLifeReverse: null,
         };
         this.state.chartData = {
             concentrationHistory: [],
             rateHistory: [],
-            theoryCurve: [],
         };
         this.state.simulation.started = false;
         this.lastProductCount = 0;
+        this.lastReactantCount = undefined;
         this.lastTime = 0;
+        this.forwardRateHistory = [];  // 清空正反应速率历史
+        this.reverseRateHistory = [];  // 清空逆反应速率历史
 
         // 通知所有相关订阅者
         this.notify('simulation');

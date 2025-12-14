@@ -1,148 +1,143 @@
 /**
  * 控制面板模块
- * 处理用户交互：参数调节、启动/暂停/重置
- * 
- * 交互规则：
- * - 温度可在运行中实时调节
- * - 活化能在模拟启动后锁定，重置后解锁
+ * 处理属性面板和控制面板的交互
  */
 
-import { stateManager } from '../state.js';
 import { wsManager } from '../websocket.js';
+import { stateManager } from '../state.js';
 
 export class ControlPanel {
     constructor() {
-        this.elements = {
-            tempSlider: document.getElementById('temp-slider'),
-            tempValue: document.getElementById('temp-value'),
-            eaSlider: document.getElementById('ea-slider'),
-            eaValue: document.getElementById('ea-value'),
-            btnStart: document.getElementById('btn-start'),
-            btnPause: document.getElementById('btn-pause'),
-            btnReset: document.getElementById('btn-reset'),
-        };
-
-        // 活化能锁定状态
-        this.eaLocked = false;
-
         this.init();
     }
 
-    /**
-     * 初始化控制面板
-     */
     init() {
-        this.bindEvents();
+        this.setupPropertySliders();
+        this.setupControlSliders();
+        this.setupButtons();
         this.subscribeToState();
     }
 
     /**
-     * 绑定 DOM 事件
+     * 设置属性滑条（模拟开始后锁定）
      */
-    bindEvents() {
-        // 温度滑块 - input 事件实时生效
-        this.elements.tempSlider.addEventListener('input', (e) => {
-            const value = parseFloat(e.target.value);
-            this.elements.tempValue.textContent = value.toFixed(1);
-            // 实时发送到后端
-            wsManager.updateConfig({ temperature: value });
-            // 实时更新理论曲线（前端预测）
-            stateManager.updateTheoryCurve(value);
+    setupPropertySliders() {
+        // A 半径
+        this.bindSlider('radius-a-slider', 'radius-a-value', (val) => {
+            wsManager.updateConfig({ radiusA: parseFloat(val) });
+        }, (val) => parseFloat(val).toFixed(2));
+
+        // B 半径
+        this.bindSlider('radius-b-slider', 'radius-b-value', (val) => {
+            wsManager.updateConfig({ radiusB: parseFloat(val) });
+        }, (val) => parseFloat(val).toFixed(2));
+
+        // A 初始数量
+        this.bindSlider('count-a-slider', 'count-a-value', (val) => {
+            wsManager.updateConfig({ initialCountA: parseInt(val) });
         });
 
-        // 活化能滑块
-        this.elements.eaSlider.addEventListener('input', (e) => {
-            if (this.eaLocked) {
-                // 阻止修改，恢复原值
-                e.target.value = stateManager.getState().config.activationEnergy;
-                return;
-            }
-            const value = parseFloat(e.target.value);
-            this.elements.eaValue.textContent = value.toFixed(1);
+        // B 初始数量
+        this.bindSlider('count-b-slider', 'count-b-value', (val) => {
+            wsManager.updateConfig({ initialCountB: parseInt(val) });
         });
 
-        this.elements.eaSlider.addEventListener('change', (e) => {
-            if (this.eaLocked) return;
-            const value = parseFloat(e.target.value);
-            wsManager.updateConfig({ activationEnergy: value });
+        // 正反应活化能
+        this.bindSlider('ea-forward-slider', 'ea-forward-value', (val) => {
+            wsManager.updateConfig({ eaForward: parseFloat(val) });
         });
 
-        // 启动按钮
-        this.elements.btnStart.addEventListener('click', () => {
-            wsManager.start();
-            this.lockActivationEnergy();
-            this.updateButtonStates(true);
-            // 通知前端开始记录数据
-            stateManager.update('simulation', { running: true, started: true });
-        });
-
-        // 暂停按钮
-        this.elements.btnPause.addEventListener('click', () => {
-            wsManager.pause();
-            this.updateButtonStates(false);
-        });
-
-        // 重置按钮
-        this.elements.btnReset.addEventListener('click', () => {
-            wsManager.reset();
-            this.unlockActivationEnergy();
-            this.updateButtonStates(false);
+        // 逆反应活化能
+        this.bindSlider('ea-reverse-slider', 'ea-reverse-value', (val) => {
+            wsManager.updateConfig({ eaReverse: parseFloat(val) });
         });
     }
 
     /**
-     * 锁定活化能滑块
+     * 设置控制滑条（运行时可调）
      */
-    lockActivationEnergy() {
-        this.eaLocked = true;
-        this.elements.eaSlider.classList.add('locked');
-        this.elements.eaSlider.style.opacity = '0.5';
-        this.elements.eaSlider.style.cursor = 'not-allowed';
+    setupControlSliders() {
+        // 温度
+        this.bindSlider('temp-slider', 'temp-value', (val) => {
+            wsManager.updateConfig({ temperature: parseFloat(val) });
+        });
     }
 
     /**
-     * 解锁活化能滑块
+     * 设置控制按钮
      */
-    unlockActivationEnergy() {
-        this.eaLocked = false;
-        this.elements.eaSlider.classList.remove('locked');
-        this.elements.eaSlider.style.opacity = '1';
-        this.elements.eaSlider.style.cursor = 'pointer';
+    setupButtons() {
+        const startBtn = document.getElementById('btn-start');
+        const pauseBtn = document.getElementById('btn-pause');
+        const resetBtn = document.getElementById('btn-reset');
+
+        if (startBtn) {
+            startBtn.addEventListener('click', () => {
+                wsManager.start();
+                // 标记模拟已启动
+                stateManager.update('simulation', { started: true });
+            });
+        }
+
+        if (pauseBtn) {
+            pauseBtn.addEventListener('click', () => {
+                wsManager.pause();
+            });
+        }
+
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => {
+                wsManager.reset();
+            });
+        }
     }
 
     /**
-     * 订阅状态变化
+     * 订阅状态更新
      */
     subscribeToState() {
-        // 订阅配置变化
+        // 监听配置变化以同步 UI
         stateManager.subscribe('config', (config) => {
-            this.elements.tempSlider.value = config.temperature;
-            this.elements.tempValue.textContent = config.temperature.toFixed(1);
-
-            // 仅在未锁定时更新活化能滑块
-            if (!this.eaLocked) {
-                this.elements.eaSlider.value = config.activationEnergy;
-                this.elements.eaValue.textContent = config.activationEnergy.toFixed(1);
-            }
-        });
-
-        // 订阅运行状态变化
-        stateManager.subscribe('simulation', (simulation) => {
-            this.updateButtonStates(simulation.running);
+            this.updateSliderValue('radius-a-slider', 'radius-a-value', config.radiusA, (v) => v.toFixed(2));
+            this.updateSliderValue('radius-b-slider', 'radius-b-value', config.radiusB, (v) => v.toFixed(2));
+            this.updateSliderValue('count-a-slider', 'count-a-value', config.initialCountA);
+            this.updateSliderValue('count-b-slider', 'count-b-value', config.initialCountB);
+            this.updateSliderValue('ea-forward-slider', 'ea-forward-value', config.eaForward);
+            this.updateSliderValue('ea-reverse-slider', 'ea-reverse-value', config.eaReverse);
+            this.updateSliderValue('temp-slider', 'temp-value', config.temperature);
         });
     }
 
     /**
-     * 更新按钮状态
-     * @param {boolean} running - 是否正在运行
+     * 绑定滑条事件
      */
-    updateButtonStates(running) {
-        if (running) {
-            this.elements.btnStart.classList.remove('active');
-            this.elements.btnPause.classList.add('active');
-        } else {
-            this.elements.btnStart.classList.add('active');
-            this.elements.btnPause.classList.remove('active');
+    bindSlider(sliderId, valueId, onChange, formatter = (v) => v) {
+        const slider = document.getElementById(sliderId);
+        const valueDisplay = document.getElementById(valueId);
+
+        if (!slider) return;
+
+        slider.addEventListener('input', (e) => {
+            const value = e.target.value;
+            if (valueDisplay) {
+                valueDisplay.textContent = formatter(value);
+            }
+            onChange(value);
+        });
+    }
+
+    /**
+     * 更新滑条显示值
+     */
+    updateSliderValue(sliderId, valueId, value, formatter = (v) => v) {
+        const slider = document.getElementById(sliderId);
+        const valueDisplay = document.getElementById(valueId);
+
+        if (slider && value !== undefined && value !== null) {
+            slider.value = value;
+        }
+        if (valueDisplay && value !== undefined && value !== null) {
+            valueDisplay.textContent = formatter(value);
         }
     }
 }

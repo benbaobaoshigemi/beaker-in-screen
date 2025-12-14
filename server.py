@@ -34,19 +34,29 @@ from physics_engine import (
 class PhysicsEngineAdapter:
     """
     物理引擎适配器
-    封装原有物理引擎，支持运行时配置
+    封装原有物理引擎，支持可逆反应配置
+    
+    可逆反应: 2A ⇌ 2B
     """
     
     def __init__(self, runtime_config: RuntimeConfig):
         self.config = runtime_config
-        self.n = runtime_config.num_particles
+        
+        # 从可逆反应配置获取参数
+        rev_config = runtime_config.reversible_reaction
+        self.n = rev_config.get_total_particles()
+        self.initial_count_a = rev_config.initial_count_a
+        self.initial_count_b = rev_config.initial_count_b
+        
         self.box_size = runtime_config.box_size
-        self.radius = runtime_config.particle_radius
+        self.radius_a = rev_config.radius_a
+        self.radius_b = rev_config.radius_b
         self.mass = runtime_config.mass
         self.dt = runtime_config.dt
         
-        # Cell 划分
-        self.cell_divs = int(self.box_size // (self.radius * 3.0))
+        # Cell 划分（使用较大的半径）
+        max_radius = max(self.radius_a, self.radius_b)
+        self.cell_divs = int(self.box_size // (max_radius * 3.0))
         if self.cell_divs < 1:
             self.cell_divs = 1
         
@@ -56,9 +66,11 @@ class PhysicsEngineAdapter:
         # 模拟时间
         self.sim_time = 0.0
         
-        # 理论曲线参数估算
-        self.k_estimated: Optional[float] = None
-        self.estimation_data: List[tuple] = []
+        # 半衰期跟踪
+        self.half_life_forward_detected = False
+        self.half_life_reverse_detected = False
+        self.initial_a_count = self.initial_count_a
+        self.initial_b_count = self.initial_count_b
         
     def _init_particles(self):
         """初始化粒子位置和速度"""
@@ -69,8 +81,6 @@ class PhysicsEngineAdapter:
         mass = self.mass
         
         # 位置: 均匀随机分布
-        # 随机分布更符合真实物理，虽然可能有少量初始重叠，
-        # 但通过碰撞处理会自然分散开
         self.pos = np.random.rand(n, 3) * box_size
         
         # 速度: 麦克斯韦-玻尔兹曼分布
@@ -81,25 +91,27 @@ class PhysicsEngineAdapter:
         v_mean = np.mean(self.vel, axis=0)
         self.vel -= v_mean
         
-        # 类型: 全部为 A (0)
+        # 类型: 根据初始浓度设置
+        # 前 initial_count_a 个为 A (0)，后 initial_count_b 个为 B (1)
         self.types = np.zeros(n, dtype=np.int32)
+        if self.initial_count_b > 0:
+            self.types[self.initial_count_a:] = 1  # B 粒子
     
     def update(self):
         """执行一步物理更新"""
         dt = self.dt
         box_size = self.box_size
         
-        # 使用运行时活化能
-        activation_energy = self.config.activation_energy
+        # 获取可逆反应参数
+        rev_config = self.config.reversible_reaction
+        ea_forward = rev_config.ea_forward
+        ea_reverse = rev_config.ea_reverse
         
-        # 物理优化 2: 恒温器 (Thermostat)
-        # 简单的速度重缩放以维持 NVT 系综，防止反应放热导致温度失控
-        # T = 2*KE / (3*N*k)
+        # 恒温器 (Thermostat)
         v_sq = np.sum(self.vel ** 2)
         current_temp = (self.mass * v_sq) / (3 * self.n * self.config.boltzmann_k)
         
         if current_temp > 0:
-            # 限制单步调整幅度 (0.99-1.01)，模拟软耦合热浴，避免数值震荡
             scale = math.sqrt(self.config.temperature / current_temp)
             scale = np.clip(scale, 0.99, 1.01)
             self.vel *= scale
@@ -112,102 +124,57 @@ class PhysicsEngineAdapter:
             self.pos, self.n, box_size, self.cell_divs
         )
         
-        # 3. 碰撞处理与反应（阿伦尼乌斯方程实现）
-        # 传入活化能、温度和玻尔兹曼常数，用于计算反应概率 P = exp(-Ea/kT)
+        # 3. 碰撞处理与可逆反应
         resolve_collisions(
             self.pos, self.vel, self.types,
             head, next_particle,
             self.cell_divs, box_size, dt,
-            activation_energy,          # 活化能
-            self.config.temperature,    # 温度 (K)
-            self.config.boltzmann_k     # 玻尔兹曼常数
+            ea_forward,                     # 正反应活化能
+            ea_reverse,                     # 逆反应活化能
+            self.config.temperature,        # 温度 (K)
+            self.config.boltzmann_k,        # 玻尔兹曼常数
+            rev_config.radius_a,            # A 粒子半径
+            rev_config.radius_b             # B 粒子半径
         )
         
         self.sim_time += dt
         
-        # 收集数据用于 k 估算
-        product_count = self.get_product_count()
-        
-        # 仅在未完成估算时收集数据，防止内存无限增长
-        if self.k_estimated is None:
-            self.estimation_data.append((self.sim_time, product_count))
-            
-        if self.k_estimated is None and len(self.estimation_data) >= 100:
-            self._estimate_k()
+        # 半衰期检测
+        self._check_half_life()
     
-    def _estimate_k(self):
-        """
-        估算反应速率常数 k
+    def _check_half_life(self):
+        """检测并记录半衰期"""
+        current_a = self.get_reactant_count()
+        current_b = self.get_product_count()
         
-        对于 nA → mB 反应:
-        - 速率方程: -d[A]/dt = k[A]^2 (二级反应)
-        - 积分形式: 1/[A] - 1/[A]0 = k*t
-        - 产物关系: [B] = ([A]0 - [A]) / n * m
-        """
-        A0 = self.n
-        k_values = []
+        # 正反应半衰期: A 减少到初始值的一半
+        if not self.half_life_forward_detected and self.initial_a_count > 0:
+            if current_a <= self.initial_a_count / 2:
+                self.config.half_life_forward = self.sim_time
+                self.half_life_forward_detected = True
+                print(f"[PhysicsEngine] Forward half-life detected: {self.sim_time:.2f}s")
         
-        # 从反应配置获取系数
-        n_reactant = self.config.reaction.get_total_reactant_consumed()  # 消耗的反应物数
-        n_product = self.config.reaction.get_total_product_created()      # 生成的产物数
-        
-        # FIX: 使用所有可用数据进行估算，而不仅仅是前100个
-        for i in range(10, len(self.estimation_data), 5):
-            t, B = self.estimation_data[i]  # B 是产物数量
-            # 根据 nA → mB，消耗的 A = B * n / m
-            consumed_A = B * n_reactant / n_product
-            A = A0 - consumed_A
-            if A > 100 and t > 0.01:
-                k = (1.0/A - 1.0/A0) / t
-                if k > 0:
-                    k_values.append(k)
-        
-        if k_values:
-            k_values.sort()
-            self.k_estimated = k_values[len(k_values) // 2]
-            print(f"[PhysicsEngine] Auto-estimated k = {self.k_estimated:.6f}")
-            # 估算完成后清空数据以释放内存
-            self.estimation_data = []
+        # 逆反应半衰期: B 减少到初始值的一半（仅当初始有 B 时有意义）
+        if not self.half_life_reverse_detected and self.initial_b_count > 0:
+            if current_b <= self.initial_b_count / 2:
+                self.config.half_life_reverse = self.sim_time
+                self.half_life_reverse_detected = True
+                print(f"[PhysicsEngine] Reverse half-life detected: {self.sim_time:.2f}s")
     
     def get_product_count(self) -> int:
-        """获取产物数量"""
+        """获取产物 B 数量"""
         return int(np.sum(self.types == 1))
     
     def get_reactant_count(self) -> int:
-        """获取反应物数量"""
+        """获取反应物 A 数量"""
         return int(np.sum(self.types == 0))
-    
-    def get_theory_value(self, t: float) -> float:
-        """
-        计算理论曲线值 (产物 B 的数量)
-        
-        对于 nA → mB 反应:
-        - 1/[A] - 1/[A]0 = k*t
-        - [A] = [A]0 / (1 + k*[A]0*t)
-        - [B] = ([A]0 - [A]) * m / n
-        """
-        if self.k_estimated is None:
-            return 0.0
-        
-        # 从反应配置获取系数
-        n_reactant = self.config.reaction.get_total_reactant_consumed()
-        n_product = self.config.reaction.get_total_product_created()
-        
-        k = self.k_estimated
-        A0 = self.n
-        denom = 1 + k * A0 * t
-        if denom <= 0:
-            return float(A0 * n_product / n_reactant)  # 最大产物数
-        A_t = A0 / denom
-        B_t = (A0 - A_t) * n_product / n_reactant
-        return B_t
     
     def get_visible_particles(self) -> List[Dict[str, Any]]:
         """获取可见粒子（切片内）用于前端渲染，包含能量信息"""
         z_mid = self.box_size / 2
         z_half_thick = self.config.slice_thickness / 2
         
-        # 筛选可见粒子（排除已消耗的粒子 type=2）
+        # 筛选可见粒子（排除已消耗的粒子 type=2，虽然可逆反应不再使用）
         z_vals = self.pos[:, 2]
         visible_mask = (np.abs(z_vals - z_mid) <= z_half_thick) & (self.types != 2)
         
@@ -215,38 +182,37 @@ class PhysicsEngineAdapter:
         visible_types = self.types[visible_mask]
         visible_vel = self.vel[visible_mask]
         
-        # 计算动能: KE = 0.5 * m * v^2
-        # 归一化能量用于亮度映射
+        n_visible = len(visible_pos)
+        if n_visible == 0:
+            return []
+        
+        # 向量化计算能量
         speed_sq = np.sum(visible_vel ** 2, axis=1)
         kinetic_energy = 0.5 * self.mass * speed_sq
         
-        # 绝对能量映射：使用固定的能量范围
-        # 最高温度 500K 时的 3σ 能量作为最大参考值
-        max_temp = 500.0  # 滑块最大温度
+        # 预计算常量
+        max_temp = 500.0
         sigma_max = math.sqrt(self.config.boltzmann_k * max_temp / self.mass)
-        max_speed = 3 * sigma_max * math.sqrt(3)  # 3σ 三个方向
+        max_speed = 3 * sigma_max * math.sqrt(3)
         max_energy_absolute = 0.5 * self.mass * max_speed ** 2
         
-        # 归一化能量到 [0, 1]（绝对映射：相对于最高温度下的最大能量）
+        # 向量化归一化
         normalized_energy = np.clip(kinetic_energy / max_energy_absolute, 0, 1)
         
-        # 转换为前端格式 - 发送归一化坐标 (0-1)
-        # TODO: 性能优化 - 建议改为扁平数组 [x, y, type, energy, ...] 以减少 JSON 体积
-        particles = []
+        # 向量化坐标归一化
+        norm_x = visible_pos[:, 0] / self.box_size
+        norm_y = visible_pos[:, 1] / self.box_size
         
-        for i in range(len(visible_pos)):
-            particles.append({
-                # 归一化坐标 (0-1)，前端根据 canvas 尺寸自行缩放
-                "x": float(visible_pos[i, 0] / self.box_size),
-                "y": float(visible_pos[i, 1] / self.box_size),
-                "type": int(visible_types[i]),
-                "energy": float(normalized_energy[i]),  # 归一化能量 [0, 1]
-            })
+        particles = [
+            {"x": float(norm_x[i]), "y": float(norm_y[i]), 
+             "type": int(visible_types[i]), "energy": float(normalized_energy[i])}
+            for i in range(n_visible)
+        ]
         
         return particles
     
     def get_state(self) -> Dict[str, Any]:
-        """获取完整状态"""
+        """获取完整状态（不再包含理论曲线）"""
         product_count = self.get_product_count()
         reactant_count = self.get_reactant_count()
         
@@ -254,8 +220,8 @@ class PhysicsEngineAdapter:
             "time": self.sim_time,
             "productCount": product_count,
             "reactantCount": reactant_count,
-            "theoryValue": self.get_theory_value(self.sim_time),
-            "kEstimated": self.k_estimated,
+            "halfLifeForward": self.config.half_life_forward,
+            "halfLifeReverse": self.config.half_life_reverse,
             "particles": self.get_visible_particles(),
         }
     
@@ -263,8 +229,10 @@ class PhysicsEngineAdapter:
         """重置模拟"""
         self._init_particles()
         self.sim_time = 0.0
-        self.k_estimated = None
-        self.estimation_data = []
+        self.half_life_forward_detected = False
+        self.half_life_reverse_detected = False
+        self.config.half_life_forward = None
+        self.config.half_life_reverse = None
 
 
 # ============================================================================
@@ -283,20 +251,28 @@ simulation_lock = threading.Lock()
 
 
 def simulation_loop():
-    """后台模拟循环"""
+    """后台模拟循环
+    
+    性能优化策略：
+    - 降低推送帧率到30FPS（人眼足够流畅）
+    - 每帧10步物理更新（10 * 0.002 = 0.02s 物理时间/帧）
+    - 总物理时间速率 = 0.02 * 30 = 0.6x 实时（合理）
+    """
     global simulation_running, physics_engine
     
-    target_fps = 60
+    target_fps = 30  # 降低到30FPS减少推送频率
     frame_time = 1.0 / target_fps
     
     while True:
+        start_time = time.perf_counter()
+        
         with simulation_lock:
             if not simulation_running or physics_engine is None:
                 time.sleep(0.1)
                 continue
             
-            # 执行多步物理更新（提高效率）
-            steps_per_frame = 2
+            # 每帧10步物理更新（平衡精度与性能）
+            steps_per_frame = 10
             for _ in range(steps_per_frame):
                 physics_engine.update()
             
@@ -306,7 +282,11 @@ def simulation_loop():
         # 推送到所有客户端
         socketio.emit('state_update', state)
         
-        time.sleep(frame_time)
+        # 精确帧时间控制
+        elapsed = time.perf_counter() - start_time
+        sleep_time = frame_time - elapsed
+        if sleep_time > 0:
+            time.sleep(sleep_time)
 
 
 # 启动后台线程
@@ -337,18 +317,28 @@ def get_config():
 @socketio.on('connect')
 def handle_connect():
     """客户端连接"""
-    print('[Server] Client connected')
-    emit('config', runtime_config.to_dict())
+    global physics_engine, simulation_running
     
-    # 如果引擎存在，发送当前状态
-    if physics_engine is not None:
-        emit('state_update', physics_engine.get_state())
+    print('[Server] Client connected')
+    
+    # 每次连接时重置物理引擎，确保干净的初始状态
+    with simulation_lock:
+        simulation_running = False
+        physics_engine = PhysicsEngineAdapter(runtime_config)
+    
+    emit('config', runtime_config.to_dict())
+    emit('state_update', physics_engine.get_state())
 
 
 @socketio.on('disconnect')
 def handle_disconnect():
     """客户端断开"""
-    print('[Server] Client disconnected')
+    global simulation_running
+    
+    with simulation_lock:
+        simulation_running = False
+        
+    print('[Server] Client disconnected - Simulation stopped')
 
 
 @socketio.on('start')
@@ -359,10 +349,13 @@ def handle_start():
     with simulation_lock:
         if physics_engine is None:
             physics_engine = PhysicsEngineAdapter(runtime_config)
+        # 锁定属性参数
+        runtime_config.lock_properties()
         simulation_running = True
     
     emit('status', {'running': True}, broadcast=True)
-    print('[Server] Simulation started')
+    emit('config', runtime_config.to_dict(), broadcast=True)  # 通知前端属性已锁定
+    print('[Server] Simulation started - Properties locked')
 
 
 @socketio.on('pause')
@@ -384,12 +377,16 @@ def handle_reset():
     
     with simulation_lock:
         simulation_running = False
+        # 解锁属性参数
+        runtime_config.unlock_properties()
         physics_engine = PhysicsEngineAdapter(runtime_config)
         state = physics_engine.get_state()
     
     emit('status', {'running': False}, broadcast=True)
-    emit('state_update', state, broadcast=True)
-    print('[Server] Simulation reset')
+    emit('config', runtime_config.to_dict(), broadcast=True)  # 通知前端属性已解锁
+    # 发送重置确认，前端收到后才清空状态
+    emit('reset_ack', state, broadcast=True)
+    print('[Server] Simulation reset - Properties unlocked')
 
 
 @socketio.on('update_config')
@@ -412,9 +409,30 @@ def handle_update_config(data: Dict[str, Any]):
 # ============================================================================
 
 if __name__ == '__main__':
+    import socket
+    
+    PORT = 5000
+    
+    # 端口冲突检测：检查是否已有服务器在运行
+    def is_port_in_use(port: int) -> bool:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('0.0.0.0', port))
+                return False
+            except OSError:
+                return True
+    
+    if is_port_in_use(PORT):
+        print("=" * 50)
+        print(f" ❌ 错误：端口 {PORT} 已被占用！")
+        print(" 可能原因：另一个服务器实例正在运行。")
+        print(" 解决方案：请先关闭已有的服务器进程。")
+        print("=" * 50)
+        sys.exit(1)
+    
     print("=" * 50)
     print(" 化学反应粒子模拟器 Web 服务")
-    print(" http://localhost:5000")
+    print(f" http://localhost:{PORT}")
     print("=" * 50)
     
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=PORT, debug=False)

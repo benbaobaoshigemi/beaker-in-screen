@@ -9,29 +9,63 @@ from typing import List, Dict, Any, Optional
 
 
 @dataclass
-class ReactionConfig:
+class ReversibleReactionConfig:
     """
-    单个反应的配置
+    可逆反应配置
     
-    反应方程格式: n_a * A + n_b * B -> n_c * C + n_d * D
+    反应方程: 2A ⇌ 2B
+    - 正反应: 2A → 2B (活化能 ea_forward)
+    - 逆反应: 2B → 2A (活化能 ea_reverse)
     
-    示例:
-    - 2A -> B: reactant_coeffs = [2], product_coeffs = [1]
-    - A + A -> P + P: reactant_coeffs = [1, 1], product_coeffs = [1, 1]
+    设计原则：
+    - A 和 B 使用完全对称的碰撞逻辑
+    - 便于后期扩展为连续反应 A → B → C
     """
-    # 反应物及其系数
-    reactants: List[str] = field(default_factory=lambda: ["A"])
-    reactant_coeffs: List[int] = field(default_factory=lambda: [2])  # 2A
+    # A 粒子属性
+    radius_a: float = 0.3
+    initial_count_a: int = 10000  # 初始全部为 A
     
-    # 产物及其系数
-    products: List[str] = field(default_factory=lambda: ["B"])
-    product_coeffs: List[int] = field(default_factory=lambda: [1])   # -> B
+    # B 粒子属性
+    radius_b: float = 0.3
+    initial_count_b: int = 0
     
-    # 活化能
-    activation_energy: float = 0.5
+    # 正反应活化能 (2A → 2B)
+    ea_forward: float = 30.0
+    
+    # 逆反应活化能 (2B → 2A)
+    ea_reverse: float = 30.0
     
     def get_equation_string(self) -> str:
         """获取反应方程式字符串"""
+        return "2A ⇌ 2B"
+    
+    def get_total_particles(self) -> int:
+        """获取总粒子数"""
+        return self.initial_count_a + self.initial_count_b
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "radiusA": self.radius_a,
+            "radiusB": self.radius_b,
+            "initialCountA": self.initial_count_a,
+            "initialCountB": self.initial_count_b,
+            "eaForward": self.ea_forward,
+            "eaReverse": self.ea_reverse,
+            "equation": self.get_equation_string(),
+        }
+
+
+# 保留旧的 ReactionConfig 以保持兼容性（后续可删除）
+@dataclass
+class ReactionConfig:
+    """旧版反应配置（保留兼容性）"""
+    reactants: List[str] = field(default_factory=lambda: ["A"])
+    reactant_coeffs: List[int] = field(default_factory=lambda: [2])
+    products: List[str] = field(default_factory=lambda: ["B"])
+    product_coeffs: List[int] = field(default_factory=lambda: [1])
+    activation_energy: float = 0.5
+    
+    def get_equation_string(self) -> str:
         reactant_str = " + ".join(
             f"{c if c > 1 else ''}{r}"
             for r, c in zip(self.reactants, self.reactant_coeffs)
@@ -43,11 +77,9 @@ class ReactionConfig:
         return f"{reactant_str} → {product_str}"
     
     def get_total_reactant_consumed(self) -> int:
-        """获取反应消耗的总反应物数量"""
         return sum(self.reactant_coeffs)
     
     def get_total_product_created(self) -> int:
-        """获取反应生成的总产物数量"""
         return sum(self.product_coeffs)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -67,104 +99,128 @@ class RuntimeConfig:
     运行时可配置参数
     
     设计原则：
-    - 所有可调节参数集中在此类
-    - 预埋多组分、竞争反应、热力学参数接口
+    - 属性参数（模拟开始后锁定）：半径、初始浓度、活化能
+    - 控制参数（运行时可调）：温度
     - 支持序列化为字典用于前端通信
     """
     
-    # 基础物理参数
+    # ========== 控制参数（运行时可调）==========
     temperature: float = 300.0       # 真实单位：开尔文 (200-500K)
-    activation_energy: float = 30.0  # 活化能 (1-100)，默认值使反应概率适中
-    num_particles: int = 10000
+    
+    # ========== 可逆反应配置（属性参数）==========
+    reversible_reaction: ReversibleReactionConfig = field(default_factory=ReversibleReactionConfig)
+    
+    # ========== 属性锁定标志 ==========
+    properties_locked: bool = False
+    
+    # ========== 系统参数（不可调）==========
     box_size: float = 40.0
-    particle_radius: float = 0.3
     mass: float = 1.0
-    
-    # 玻尔兹曼常数（模拟单位）
-    # 设计：使 Ea/(kB*T) 在用户可调范围内约为 0.1-10
-    boltzmann_k: float = 0.1
-    
-    # 时间步长
-    dt: float = 0.02
-    
-    # 切片显示参数
+    boltzmann_k: float = 0.1  # 模拟单位
+    dt: float = 0.002
     slice_thickness: float = 4.0
     
-    # ========== 反应配置（解耦） ==========
-    # 当前反应
+    # ========== 半衰期统计（由模拟计算）==========
+    half_life_forward: Optional[float] = None  # 正反应半衰期
+    half_life_reverse: Optional[float] = None  # 逆反应半衰期
+    
+    # 保留旧字段以兼容（将被弃用）
+    activation_energy: float = 30.0
+    num_particles: int = 10000
+    particle_radius: float = 0.3
     reaction: ReactionConfig = field(default_factory=ReactionConfig)
-    
-    # 预埋：多反应支持
     reactions: List[ReactionConfig] = field(default_factory=list)
-    
-    # 组分列表（预埋多组分）
     components: List[str] = field(default_factory=lambda: ["A", "B"])
-    
-    # 热力学参数预埋
-    delta_h: float = 0.0         # 反应焓变 (kJ/mol)
-    delta_s: float = 0.0         # 反应熵变 (J/(mol·K))
-    equilibrium_k: Optional[float] = None  # 平衡常数
+    delta_h: float = 0.0
+    delta_s: float = 0.0
+    equilibrium_k: Optional[float] = None
     
     def to_dict(self) -> Dict[str, Any]:
         """序列化为字典，用于前端通信"""
         return {
+            # 控制参数
             "temperature": self.temperature,
-            "activationEnergy": self.activation_energy,
-            "numParticles": self.num_particles,
+            # 可逆反应配置
+            "reversibleReaction": self.reversible_reaction.to_dict(),
+            # 属性锁定状态
+            "propertiesLocked": self.properties_locked,
+            # 系统参数
             "boxSize": self.box_size,
-            "particleRadius": self.particle_radius,
             "mass": self.mass,
             "dt": self.dt,
             "sliceThickness": self.slice_thickness,
-            # 反应配置
+            # 半衰期
+            "halfLifeForward": self.half_life_forward,
+            "halfLifeReverse": self.half_life_reverse,
+            # 兼容旧版
+            "numParticles": self.reversible_reaction.get_total_particles(),
+            "particleRadius": self.reversible_reaction.radius_a,
+            "activationEnergy": self.reversible_reaction.ea_forward,
             "reaction": self.reaction.to_dict(),
             "components": self.components,
-            # 热力学参数
-            "deltaH": self.delta_h,
-            "deltaS": self.delta_s,
-            "equilibriumK": self.equilibrium_k,
         }
     
     def update_from_dict(self, data: Dict[str, Any]) -> None:
         """从字典更新配置"""
+        # 控制参数（始终可更新）
         if "temperature" in data:
             self.temperature = float(data["temperature"])
-        if "activationEnergy" in data:
-            self.activation_energy = float(data["activationEnergy"])
-            self.reaction.activation_energy = self.activation_energy
-        if "numParticles" in data:
-            self.num_particles = int(data["numParticles"])
-        if "boxSize" in data:
-            self.box_size = float(data["boxSize"])
+        
+        # 属性参数（仅在未锁定时可更新）
+        if not self.properties_locked:
+            # 可逆反应参数
+            if "radiusA" in data:
+                self.reversible_reaction.radius_a = float(data["radiusA"])
+            if "radiusB" in data:
+                self.reversible_reaction.radius_b = float(data["radiusB"])
+            if "initialCountA" in data:
+                self.reversible_reaction.initial_count_a = int(data["initialCountA"])
+            if "initialCountB" in data:
+                self.reversible_reaction.initial_count_b = int(data["initialCountB"])
+            if "eaForward" in data:
+                self.reversible_reaction.ea_forward = float(data["eaForward"])
+            if "eaReverse" in data:
+                self.reversible_reaction.ea_reverse = float(data["eaReverse"])
+            
+            # 兼容旧版
+            if "particleRadius" in data:
+                self.reversible_reaction.radius_a = float(data["particleRadius"])
+                self.reversible_reaction.radius_b = float(data["particleRadius"])
+            if "activationEnergy" in data:
+                self.reversible_reaction.ea_forward = float(data["activationEnergy"])
+        
+        # 切片厚度
         if "sliceThickness" in data:
             self.slice_thickness = float(data["sliceThickness"])
-        # 热力学参数
-        if "deltaH" in data:
-            self.delta_h = float(data["deltaH"])
-        if "deltaS" in data:
-            self.delta_s = float(data["deltaS"])
+    
+    def lock_properties(self) -> None:
+        """锁定属性参数"""
+        self.properties_locked = True
+    
+    def unlock_properties(self) -> None:
+        """解锁属性参数"""
+        self.properties_locked = False
     
     def clone(self) -> 'RuntimeConfig':
         """创建配置副本"""
         return RuntimeConfig(
             temperature=self.temperature,
-            activation_energy=self.activation_energy,
-            num_particles=self.num_particles,
+            reversible_reaction=ReversibleReactionConfig(
+                radius_a=self.reversible_reaction.radius_a,
+                radius_b=self.reversible_reaction.radius_b,
+                initial_count_a=self.reversible_reaction.initial_count_a,
+                initial_count_b=self.reversible_reaction.initial_count_b,
+                ea_forward=self.reversible_reaction.ea_forward,
+                ea_reverse=self.reversible_reaction.ea_reverse,
+            ),
+            properties_locked=self.properties_locked,
             box_size=self.box_size,
-            particle_radius=self.particle_radius,
             mass=self.mass,
             boltzmann_k=self.boltzmann_k,
             dt=self.dt,
             slice_thickness=self.slice_thickness,
-            reaction=ReactionConfig(
-                reactants=self.reaction.reactants.copy(),
-                reactant_coeffs=self.reaction.reactant_coeffs.copy(),
-                products=self.reaction.products.copy(),
-                product_coeffs=self.reaction.product_coeffs.copy(),
-                activation_energy=self.reaction.activation_energy,
-            ),
+            half_life_forward=self.half_life_forward,
+            half_life_reverse=self.half_life_reverse,
             components=self.components.copy(),
-            delta_h=self.delta_h,
-            delta_s=self.delta_s,
-            equilibrium_k=self.equilibrium_k,
         )
+

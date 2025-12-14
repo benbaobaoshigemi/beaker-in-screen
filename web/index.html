@@ -20,44 +20,94 @@
     <div class="app-container">
         <!-- 左侧列 -->
         <div class="left-column">
-            <!-- 上半部分: 控制面板 + 暂留区 -->
+            <!-- 上半部分: 属性面板 + 控制面板 -->
             <div class="top-row">
-                <!-- 控制面板 -->
-                <div class="panel control-panel" id="control-panel">
-                    <h3 class="panel-title">控制面板</h3>
+                <!-- 属性面板（模拟开始后锁定）-->
+                <div class="panel properties-panel" id="properties-panel">
+                    <h3 class="panel-title">属性 <span class="lock-indicator" id="lock-indicator"></span></h3>
 
-                    <div class="controls-grid">
-                        <!-- 温度滑块 (开尔文) -->
-                        <div class="slider-container">
-                            <label class="slider-label">
-                                <span>温度 T (K)</span>
-                                <span class="slider-value" id="temp-value">300</span>
-                            </label>
-                            <input type="range" class="slider" id="temp-slider" min="200" max="500" step="10"
-                                value="300">
+                    <div class="properties-grid">
+                        <!-- 粒子半径 -->
+                        <div class="slider-pair">
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>A 半径</span>
+                                    <span class="slider-value" id="radius-a-value">0.30</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="radius-a-slider" min="0.1"
+                                    max="0.5" step="0.01" value="0.30">
+                            </div>
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>B 半径</span>
+                                    <span class="slider-value" id="radius-b-value">0.30</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="radius-b-slider" min="0.1"
+                                    max="0.5" step="0.01" value="0.30">
+                            </div>
                         </div>
 
-                        <!-- 活化能滑块 -->
-                        <div class="slider-container">
-                            <label class="slider-label">
-                                <span>活化能 Ea</span>
-                                <span class="slider-value" id="ea-value">10</span>
-                            </label>
-                            <input type="range" class="slider" id="ea-slider" min="1" max="100" step="1" value="10">
+                        <!-- 初始浓度 -->
+                        <div class="slider-pair">
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>A 初始数量</span>
+                                    <span class="slider-value" id="count-a-value">10000</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="count-a-slider" min="0"
+                                    max="10000" step="100" value="10000">
+                            </div>
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>B 初始数量</span>
+                                    <span class="slider-value" id="count-b-value">0</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="count-b-slider" min="0"
+                                    max="10000" step="100" value="0">
+                            </div>
+                        </div>
+
+                        <!-- 活化能 -->
+                        <div class="slider-pair">
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>正反应 Ea</span>
+                                    <span class="slider-value" id="ea-forward-value">30</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="ea-forward-slider" min="1"
+                                    max="100" step="1" value="30">
+                            </div>
+                            <div class="slider-container">
+                                <label class="slider-label">
+                                    <span>逆反应 Ea</span>
+                                    <span class="slider-value" id="ea-reverse-value">30</span>
+                                </label>
+                                <input type="range" class="slider property-slider" id="ea-reverse-slider" min="1"
+                                    max="100" step="1" value="30">
+                            </div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- 控制按钮 -->
-                    <div class="button-group">
+                <!-- 控制面板（运行时可调）-->
+                <div class="panel control-panel" id="control-panel">
+                    <h3 class="panel-title">控制</h3>
+
+                    <!-- 温度滑块 -->
+                    <div class="slider-container">
+                        <label class="slider-label">
+                            <span>温度 T (K)</span>
+                            <span class="slider-value" id="temp-value">300</span>
+                        </label>
+                        <input type="range" class="slider" id="temp-slider" min="200" max="500" step="10" value="300">
+                    </div>
+
+                    <!-- 控制按钮（纵向排列）-->
+                    <div class="button-group-vertical">
                         <button class="btn" id="btn-start">启动</button>
                         <button class="btn" id="btn-pause">暂停</button>
                         <button class="btn" id="btn-reset">重置</button>
                     </div>
-                </div>
-
-                <!-- 暂时留空区域 -->
-                <div class="panel placeholder-panel">
-                    <span class="secondary-text">暂时留空</span>
                 </div>
             </div>
 
@@ -102,10 +152,6 @@
                     <div class="legend-item">
                         <span class="legend-dot product"></span>
                         <span>产物 [B]</span>
-                    </div>
-                    <div class="legend-item">
-                        <span class="legend-dot theory"></span>
-                        <span>[B] 理论</span>
                     </div>
                 </div>
                 <div class="chart-info">

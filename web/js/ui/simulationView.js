@@ -79,10 +79,23 @@ export class SimulationView {
     }
 
     startRenderLoop() {
-        const render = () => {
-            this.render();
-            this.updateFps();
+        const fps = 60;
+        const interval = 1000 / fps;
+        let lastTime = 0;
+
+        const render = (currentTime) => {
             requestAnimationFrame(render);
+
+            const elapsed = currentTime - lastTime;
+
+            // 如果间隔大于目标帧间隔，则渲染
+            if (elapsed > interval) {
+                // 校正上次渲染时间，扣除超出部分（避免累积漂移）
+                lastTime = currentTime - (elapsed % interval);
+
+                this.render();
+                this.updateFps();
+            }
         };
         requestAnimationFrame(render);
     }
@@ -124,13 +137,21 @@ export class SimulationView {
         }
 
         const particles = this.particles;
-        const radius = CONFIG.SIMULATION.PARTICLE_RADIUS;
+        const config = stateManager.getState().config;
+
+        // 动态获取粒子半径（A 和 B 分别）
+        const physicsRadiusA = config.radiusA || 0.3;
+        const physicsRadiusB = config.radiusB || 0.3;
+        const boxSize = CONFIG.SIMULATION.BOX_SIZE;
+        // 取 width 和 height 中较小的作为基准，保持圆形
+        const screenScale = Math.min(width, height);
+        const radiusA = (physicsRadiusA / boxSize) * screenScale;
+        const radiusB = (physicsRadiusB / boxSize) * screenScale;
+
         const scaleX = width;
         const scaleY = height;
 
         // 渲染每个粒子 - 实心圆，无辉光，纯色
-        // 亮度已在 getParticleColor 中计算 (30%-100%)
-
         ctx.shadowBlur = 0; // 确保无阴影
 
         for (let i = 0; i < particles.length; i++) {
@@ -140,6 +161,9 @@ export class SimulationView {
 
             const x = p.x * scaleX;
             const y = p.y * scaleY;
+
+            // 根据粒子类型选择半径
+            const radius = p.type === 0 ? radiusA : radiusB;
 
             ctx.fillStyle = color;
             ctx.beginPath();
@@ -151,3 +175,4 @@ export class SimulationView {
         ctx.shadowBlur = 0;
     }
 }
+

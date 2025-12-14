@@ -29,7 +29,7 @@ BOLTZMANN_K = 0.1
 ACTIVATION_ENERGY = 30.0  # 默认值，给予适中的反应概率
 
 # Time step
-DT = 0.02 # Smaller step for higher density stability
+DT = 0.002 # Ultra-high precision
 
 # --- Rendering Constants ---
 SCREEN_WIDTH = 1200

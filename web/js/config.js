@@ -76,7 +76,8 @@ export const CONFIG = {
 
     /**
      * 根据粒子类型获取颜色
-     * HSL 亮度根据能量线性映射：30% (min) ~ 100% (max)
+     * 使用幂函数映射增强亮度对比：energy^gamma
+     * gamma < 1 会让更多粒子变亮，增加高亮粒子占比
      * @param {number} type - 粒子类型 (0=A, 1=B)
      * @param {number} energy - 归一化能量 [0, 1]
      * @returns {string} HSL 颜色字符串
@@ -85,18 +86,19 @@ export const CONFIG = {
         const config = this.getParticleColorConfig();
         const particleConfig = type === 0 ? config.A : config.B;
 
-        // 能量映射到亮度 (Lightness)
-        // 范围: 30% ~ 100%
-        // 注意：L=100% 是纯白，意味着高能粒子发白光
-        // L=50% 是最纯的颜色
-        // L=30% 是较暗的颜色
+        // 亮度范围: 30% ~ 100%
         const minL = 30;
         const maxL = 100;
 
         // 限制 energy 在 [0, 1]
         const safeEnergy = Math.max(0, Math.min(1, energy || 0));
 
-        const lightness = minL + safeEnergy * (maxL - minL);
+        // 幂函数映射 (gamma = 0.6)
+        // 让中低能量粒子变亮，增加亮粒子占比
+        const gamma = 0.6;
+        const mappedEnergy = Math.pow(safeEnergy, gamma);
+
+        const lightness = minL + mappedEnergy * (maxL - minL);
 
         return `hsl(${particleConfig.hue}, 100%, ${lightness}%)`;
     },

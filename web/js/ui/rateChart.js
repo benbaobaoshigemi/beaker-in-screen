@@ -61,16 +61,27 @@ export class RateChart {
         stateManager.subscribe('chartData', (chartData) => {
             this.data = chartData.rateHistory;
 
-            // 更新当前速率显示
-            if (this.data.length > 0 && this.rateCurrent) {
-                const lastRate = this.data[this.data.length - 1].value;
-                this.rateCurrent.textContent = `当前速率: ${lastRate.toFixed(1)}`;
+            // 更新当前速率显示（正反应和逆反应）
+            if (this.rateCurrent) {
+                if (this.data.length > 0) {
+                    const last = this.data[this.data.length - 1];
+                    const fwd = (last.forward || 0).toFixed(1);
+                    const rev = (last.reverse || 0).toFixed(1);
+                    this.rateCurrent.textContent = `正:${fwd} / 逆:${rev}`;
+                } else {
+                    this.rateCurrent.textContent = '速率: --';
+                }
             }
         });
 
         stateManager.subscribe('concentration', (concentration) => {
-            if (this.rateK && concentration.kEstimated !== null) {
-                this.rateK.textContent = `k = ${concentration.kEstimated.toFixed(6)}`;
+            // kEstimated 已移除，显示半衰期信息
+            if (this.rateK) {
+                if (concentration.halfLifeForward !== null) {
+                    this.rateK.textContent = `t½(正) = ${concentration.halfLifeForward.toFixed(2)}s`;
+                } else {
+                    this.rateK.textContent = 't½ = --';
+                }
             }
         });
     }
@@ -118,9 +129,11 @@ export class RateChart {
         ctx.lineTo(width - padding.RIGHT, plotOriginY);
         ctx.stroke();
 
-        // 动态计算 Y 轴范围（基于数据最大值）
+        // 动态计算 Y 轴范围（基于正反应和逆反应的最大值）
         if (this.data.length > 0) {
-            const maxValue = Math.max(...this.data.map(d => d.value));
+            const maxForward = Math.max(...this.data.map(d => d.forward || 0));
+            const maxReverse = Math.max(...this.data.map(d => d.reverse || 0));
+            const maxValue = Math.max(maxForward, maxReverse);
             this.yMax = Math.max(CONFIG.CHART.RATE.Y_MAX, maxValue * 1.2);
         }
 
@@ -149,6 +162,7 @@ export class RateChart {
         }
 
         if (this.data.length < 2) {
+            // 数据不足时仍显示坐标轴，不绘制曲线
             return;
         }
 
@@ -157,15 +171,15 @@ export class RateChart {
         const scrollOffset = Math.max(0, this.data.length - visiblePoints);
         const visibleData = this.data.slice(scrollOffset);
 
-        // 绘制曲线
-        ctx.strokeStyle = curveColors.rate;
+        // 绘制正反应速率曲线（红色 - 反应物颜色）
+        ctx.strokeStyle = curveColors.reactant;
         ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
         ctx.beginPath();
 
         for (let i = 0; i < visibleData.length; i++) {
             const point = visibleData[i];
             const x = plotOriginX + (i / visiblePoints) * plotWidth;
-            const y = plotOriginY - (point.value / yMax) * plotHeight;
+            const y = plotOriginY - ((point.forward || 0) / yMax) * plotHeight;
 
             if (i === 0) {
                 ctx.moveTo(x, y);
@@ -173,7 +187,25 @@ export class RateChart {
                 ctx.lineTo(x, y);
             }
         }
+        ctx.stroke();
 
+        // 绘制逆反应速率曲线（蓝色 - 产物颜色）
+        ctx.strokeStyle = curveColors.product;
+        ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
+        ctx.beginPath();
+
+        for (let i = 0; i < visibleData.length; i++) {
+            const point = visibleData[i];
+            const x = plotOriginX + (i / visiblePoints) * plotWidth;
+            const y = plotOriginY - ((point.reverse || 0) / yMax) * plotHeight;
+
+            if (i === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        }
         ctx.stroke();
     }
 }
+

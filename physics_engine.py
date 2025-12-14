@@ -87,30 +87,27 @@ def build_cell_list(pos, n, box_size, cell_divisions):
 
 @njit
 def resolve_collisions(pos, vel, types, head, next_particle, cell_divisions, box_size, dt,
-                       activation_energy, temperature, boltzmann_k):
+                       ea_forward, ea_reverse, temperature, boltzmann_k, 
+                       radius_a, radius_b):
     """
-    碰撞处理与反应判定
+    碰撞处理与可逆反应判定
     
-    阿伦尼乌斯方程实现：
-    - 当碰撞能量 >= 活化能时，计算反应概率 P = exp(-Ea / (kB * T))
-    - 以此概率决定反应是否发生
+    可逆反应方程: 2A ⇌ 2B
+    - 正反应: A + A → B + B (活化能 ea_forward)
+    - 逆反应: B + B → A + A (活化能 ea_reverse)
     
     参数:
-        activation_energy: 活化能 (无量纲，典型值 0.1-10)
-        temperature: 温度 (开尔文，典型值 200-500K)
-        boltzmann_k: 玻尔兹曼常数 (模拟单位)
+        ea_forward: 正反应活化能
+        ea_reverse: 逆反应活化能
+        temperature: 温度
+        boltzmann_k: 玻尔兹曼常数
+        radius_a: A 粒子半径
+        radius_b: B 粒子半径
     """
-    # Constants
-    diameter = RADIUS * 2.0
-    diam_sq = diameter * diameter
     cell_size = box_size / cell_divisions
     
-    # 预计算阿伦尼乌斯概率（所有符合能量条件的碰撞共用）
-    # P = exp(-Ea / (kB * T))
-    # 为避免除零，设置温度下限
+    # 预计算温度安全值
     temp_safe = max(temperature, 1.0)
-    arrhenius_factor = activation_energy / (boltzmann_k * temp_safe)
-    reaction_probability = math.exp(-arrhenius_factor)
     
     for cx in range(cell_divisions):
         for cy in range(cell_divisions):
@@ -137,9 +134,27 @@ def resolve_collisions(pos, vel, types, head, next_particle, cell_divisions, box
                                 while j != -1:
                                     if i < j: # Avoid double check and self-check
                                         
+                                        # 获取粒子类型
+                                        type_i = types[i]
+                                        type_j = types[j]
+                                        
+                                        # 跳过已消耗的粒子
+                                        if type_i == 2 or type_j == 2:
+                                            j = next_particle[j]
+                                            continue
+                                        
+                                        # 根据粒子类型选择半径
+                                        # A=0, B=1
+                                        r_i = radius_a if type_i == 0 else radius_b
+                                        r_j = radius_a if type_j == 0 else radius_b
+                                        
+                                        # 碰撞距离 = 半径之和
+                                        collision_dist = r_i + r_j
+                                        collision_dist_sq = collision_dist * collision_dist
+                                        
                                         dx, dy, dz, dist_sq = get_pbc_dist(pos[i], pos[j], box_size)
                                         
-                                        if dist_sq < diam_sq and dist_sq > 1e-9:
+                                        if dist_sq < collision_dist_sq and dist_sq > 1e-9:
                                             dist = math.sqrt(dist_sq)
                                             
                                             # Relative velocity
@@ -160,19 +175,21 @@ def resolve_collisions(pos, vel, types, head, next_particle, cell_divisions, box
                                                 reduced_mass = MASS / 2.0
                                                 e_coll = 0.5 * reduced_mass * vn * vn
                                                 
-                                                reacted = False
-                                                # 化合反应: 2A -> B
-                                                # 能量阈值判定
-                                                # 注意：能量分布本身已遵循 Maxwell-Boltzmann 分布
-                                                # 因此 e_coll >= Ea 的碰撞比例自然为 exp(-Ea/kT)
-                                                # 不需要再次乘以 exp(-Ea/kT) 概率因子，否则会导致双重指数衰减
-                                                if e_coll >= activation_energy:
-                                                    if types[i] == TYPE_A and types[j] == TYPE_A:
-                                                        # 移除额外的概率判定，直接反应
-                                                        # (假设方位因子/空间因子为 1.0)
-                                                        types[i] = TYPE_P
-                                                        types[j] = 2  # TYPE_CONSUMED
-                                                        reacted = True
+                                                # ========== 可逆反应判定 ==========
+                                                # 正反应: A + A → B + B
+                                                if type_i == TYPE_A and type_j == TYPE_A:
+                                                    if e_coll >= ea_forward:
+                                                        types[i] = TYPE_P  # A → B
+                                                        types[j] = TYPE_P  # A → B
+                                                
+                                                # 逆反应: B + B → A + A
+                                                elif type_i == TYPE_P and type_j == TYPE_P:
+                                                    if e_coll >= ea_reverse:
+                                                        types[i] = TYPE_A  # B → A
+                                                        types[j] = TYPE_A  # B → A
+                                                
+                                                # A + B 碰撞：仅弹性碰撞，无反应
+                                                # (保持原状)
                                                 
                                                 # Elastic Collision Response (Always bounce)
                                                 vel[i, 0] -= vn * nx
@@ -196,9 +213,10 @@ class PhysicsEngine:
         self.temperature = TEMPERATURE
         self.boltzmann_k = BOLTZMANN_K
         self.activation_energy = ACTIVATION_ENERGY
+        self.radius = RADIUS
         
         # Determine cell divisions
-        self.cell_divs = int(self.box_size // (RADIUS * 3.0))
+        self.cell_divs = int(self.box_size // (self.radius * 3.0))
         if self.cell_divs < 1: self.cell_divs = 1
         
         self.pos, self.vel, self.types = init_particles_numba(self.n, self.box_size, TEMPERATURE)
@@ -217,8 +235,10 @@ class PhysicsEngine:
             self.cell_divs, self.box_size, dt,
             self.activation_energy,
             self.temperature,
-            self.boltzmann_k
+            self.boltzmann_k,
+            self.radius
         )
+
 
     def get_product_count(self):
         return np.sum(self.types == TYPE_P)
