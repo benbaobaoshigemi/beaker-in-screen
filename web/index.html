@@ -12,112 +12,126 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 
-    <!-- 样式 -->
-    <link rel="stylesheet" href="css/style.css">
+    <!-- Tailwind CSS 输出 -->
+    <link rel="stylesheet" href="css/output.css">
 </head>
 
-<body>
-    <div class="app-container">
+<body class="bg-bg text-text-primary font-sans text-md leading-normal min-h-screen overflow-hidden">
+    <div class="grid grid-cols-app gap-md p-md h-screen max-w-app mx-auto">
         <!-- 左侧列 -->
-        <div class="left-column">
+        <div class="flex flex-col gap-md min-h-0 overflow-hidden">
             <!-- 上半部分: 属性面板 + 控制面板 -->
-            <div class="top-row">
+            <div class="grid grid-cols-top-row gap-md">
                 <!-- 属性面板（模拟开始后锁定）-->
-                <div class="panel properties-panel" id="properties-panel">
-                    <h3 class="panel-title">属性 <span class="lock-indicator" id="lock-indicator"></span></h3>
+                <div class="bg-surface border border-border rounded-panel p-md flex flex-col" id="properties-panel">
+                    <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">
+                        属性 <span class="text-xs text-text-muted ml-xs lock-indicator" id="lock-indicator"></span>
+                    </h3>
 
-                    <div class="properties-grid">
+                    <div class="flex flex-col gap-sm">
                         <!-- 粒子半径 -->
-                        <div class="slider-pair">
-                            <div class="slider-container">
-                                <label class="slider-label">
+                        <div class="grid grid-cols-slider-pair gap-md">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>A 半径</span>
-                                    <span class="slider-value" id="radius-a-value">0.30</span>
+                                    <span class="font-medium text-text-primary tabular-nums"
+                                        id="radius-a-value">0.30</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="radius-a-slider" min="0.1"
-                                    max="0.5" step="0.01" value="0.30">
+                                <input type="range" class="property-slider" id="radius-a-slider" min="0.1" max="0.5"
+                                    step="0.01" value="0.30">
                             </div>
-                            <div class="slider-container">
-                                <label class="slider-label">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>B 半径</span>
-                                    <span class="slider-value" id="radius-b-value">0.30</span>
+                                    <span class="font-medium text-text-primary tabular-nums"
+                                        id="radius-b-value">0.30</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="radius-b-slider" min="0.1"
-                                    max="0.5" step="0.01" value="0.30">
+                                <input type="range" class="property-slider" id="radius-b-slider" min="0.1" max="0.5"
+                                    step="0.01" value="0.30">
                             </div>
                         </div>
 
                         <!-- 初始浓度 -->
-                        <div class="slider-pair">
-                            <div class="slider-container">
-                                <label class="slider-label">
+                        <div class="grid grid-cols-slider-pair gap-md">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>A 初始数量</span>
-                                    <span class="slider-value" id="count-a-value">10000</span>
+                                    <span class="font-medium text-text-primary tabular-nums"
+                                        id="count-a-value">10000</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="count-a-slider" min="0"
-                                    max="10000" step="100" value="10000">
+                                <input type="range" class="property-slider" id="count-a-slider" min="0" max="10000"
+                                    step="100" value="10000">
                             </div>
-                            <div class="slider-container">
-                                <label class="slider-label">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>B 初始数量</span>
-                                    <span class="slider-value" id="count-b-value">0</span>
+                                    <span class="font-medium text-text-primary tabular-nums" id="count-b-value">0</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="count-b-slider" min="0"
-                                    max="10000" step="100" value="0">
+                                <input type="range" class="property-slider" id="count-b-slider" min="0" max="10000"
+                                    step="100" value="0">
                             </div>
                         </div>
 
                         <!-- 活化能 -->
-                        <div class="slider-pair">
-                            <div class="slider-container">
-                                <label class="slider-label">
+                        <div class="grid grid-cols-slider-pair gap-md">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>正反应 Ea</span>
-                                    <span class="slider-value" id="ea-forward-value">30</span>
+                                    <span class="font-medium text-text-primary tabular-nums"
+                                        id="ea-forward-value">30</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="ea-forward-slider" min="1"
-                                    max="100" step="1" value="30">
+                                <input type="range" class="property-slider" id="ea-forward-slider" min="1" max="100"
+                                    step="1" value="30">
                             </div>
-                            <div class="slider-container">
-                                <label class="slider-label">
+                            <div class="flex flex-col gap-xs">
+                                <label class="flex justify-between items-center text-sm text-text-secondary">
                                     <span>逆反应 Ea</span>
-                                    <span class="slider-value" id="ea-reverse-value">30</span>
+                                    <span class="font-medium text-text-primary tabular-nums"
+                                        id="ea-reverse-value">30</span>
                                 </label>
-                                <input type="range" class="slider property-slider" id="ea-reverse-slider" min="1"
-                                    max="100" step="1" value="30">
+                                <input type="range" class="property-slider" id="ea-reverse-slider" min="1" max="100"
+                                    step="1" value="30">
                             </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- 控制面板（运行时可调）-->
-                <div class="panel control-panel" id="control-panel">
-                    <h3 class="panel-title">控制</h3>
+                <div class="bg-surface border border-border rounded-panel p-md flex flex-col min-h-[180px]"
+                    id="control-panel">
+                    <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">控制</h3>
 
                     <!-- 温度滑块 -->
-                    <div class="slider-container">
-                        <label class="slider-label">
+                    <div class="flex flex-col gap-xs mb-lg">
+                        <label class="flex justify-between items-center text-sm text-text-secondary">
                             <span>温度 T (K)</span>
-                            <span class="slider-value" id="temp-value">300</span>
+                            <span class="font-medium text-text-primary tabular-nums" id="temp-value">300</span>
                         </label>
-                        <input type="range" class="slider" id="temp-slider" min="200" max="500" step="10" value="300">
+                        <input type="range" id="temp-slider" min="200" max="500" step="10" value="300">
                     </div>
 
                     <!-- 控制按钮（纵向排列）-->
-                    <div class="button-group-vertical">
-                        <button class="btn" id="btn-start">启动</button>
-                        <button class="btn" id="btn-pause">暂停</button>
-                        <button class="btn" id="btn-reset">重置</button>
+                    <div class="flex flex-col gap-sm mt-auto">
+                        <button
+                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
+                            id="btn-start">启动</button>
+                        <button
+                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
+                            id="btn-pause">暂停</button>
+                        <button
+                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
+                            id="btn-reset">重置</button>
                     </div>
                 </div>
             </div>
 
             <!-- 下半部分: 模拟显示 -->
-            <div class="panel simulation-panel">
-                <h3 class="panel-title">模拟显示</h3>
-                <div class="canvas-container">
+            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
+                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">模拟显示</h3>
+                <div class="flex-1 min-h-0 relative canvas-container">
                     <canvas id="simulation-canvas"></canvas>
                 </div>
-                <div class="simulation-stats">
+                <div class="flex justify-between text-xs text-text-muted mt-sm">
                     <span id="stats-time">时间: 0.00</span>
                     <span id="stats-fps">FPS: --</span>
                 </div>
@@ -125,36 +139,36 @@
         </div>
 
         <!-- 右侧列 -->
-        <div class="right-column">
+        <div class="flex flex-col gap-md min-h-0 overflow-hidden">
             <!-- 反应速率图 -->
-            <div class="panel chart-panel">
-                <h3 class="panel-title">反应速率图</h3>
-                <div class="canvas-container">
+            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
+                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">反应速率图</h3>
+                <div class="flex-1 min-h-0 relative canvas-container">
                     <canvas id="rate-chart"></canvas>
                 </div>
-                <div class="chart-info">
+                <div class="flex justify-between text-xs text-text-muted mt-sm">
                     <span id="rate-current">当前速率: --</span>
                     <span id="rate-k">k = --</span>
                 </div>
             </div>
 
             <!-- 物质浓度时变图 -->
-            <div class="panel chart-panel">
-                <h3 class="panel-title">物质浓度时变图</h3>
-                <div class="canvas-container">
+            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
+                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">物质浓度时变图</h3>
+                <div class="flex-1 min-h-0 relative canvas-container">
                     <canvas id="concentration-chart"></canvas>
                 </div>
-                <div class="chart-legend">
-                    <div class="legend-item">
+                <div class="flex gap-md mt-sm text-xs">
+                    <div class="flex items-center gap-xs">
                         <span class="legend-dot reactant"></span>
                         <span>反应物 [A]</span>
                     </div>
-                    <div class="legend-item">
+                    <div class="flex items-center gap-xs">
                         <span class="legend-dot product"></span>
                         <span>产物 [B]</span>
                     </div>
                 </div>
-                <div class="chart-info">
+                <div class="flex justify-between text-xs text-text-muted mt-sm">
                     <span id="concentration-a">[A] = --</span>
                     <span id="concentration-p">[B] = --</span>
                 </div>

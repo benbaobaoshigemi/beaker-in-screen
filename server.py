@@ -113,6 +113,10 @@ class PhysicsEngineAdapter:
         
         if current_temp > 0:
             scale = math.sqrt(self.config.temperature / current_temp)
+            # 调试日志：每 60 帧打印一次温度状态
+            if self.sim_time % 1.0 < dt:
+                print(f"[Physics] Target Temp: {self.config.temperature:.1f}, Current Temp: {current_temp:.1f}, Scale: {scale:.4f}")
+            
             scale = np.clip(scale, 0.99, 1.01)
             self.vel *= scale
 

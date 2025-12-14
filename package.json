@@ -1,0 +1,12 @@
+{
+    "name": "beakerinscreen",
+    "version": "1.0.0",
+    "description": "化学反应粒子模拟器",
+    "scripts": {
+        "build:css": "tailwindcss -i ./web/css/input.css -o ./web/css/output.css",
+        "watch:css": "tailwindcss -i ./web/css/input.css -o ./web/css/output.css --watch"
+    },
+    "devDependencies": {
+        "tailwindcss": "^3.4.0"
+    }
+}
