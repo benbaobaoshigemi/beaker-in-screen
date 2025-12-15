@@ -17,10 +17,8 @@
 
         <!-- 左侧：可视化与图表 -->
         <div class="flex flex-col gap-md h-full min-h-0">
-            <!-- 模拟视窗 -->
             <!-- 模拟视窗 (Space Share) -->
             <div class="relative flex-1 bg-surface rounded-panel border border-border overflow-hidden group">
-                <!-- 确保这里是 Canvas -->
                 <canvas id="simulation-canvas" class="w-full h-full block"></canvas>
 
                 <!-- 悬浮状态信息 -->
@@ -31,7 +29,6 @@
                 </div>
             </div>
 
-            <!-- 图表区域 -->
             <!-- 图表区域 (Space Share) -->
             <div class="flex-1 grid grid-cols-2 gap-md shrink-0 min-h-0">
                 <!-- 浓度图 -->
@@ -42,7 +39,6 @@
                         <div id="concentration-values" class="flex gap-2 text-[10px] font-mono text-text-muted"></div>
                         <div id="concentration-legend" class="flex gap-2 text-xs"></div>
                     </div>
-                    <!-- 外层div用于布局，内部 canvas 填满 -->
                     <div class="flex-1 relative w-full min-h-0">
                         <canvas id="concentration-chart" class="w-full h-full block absolute top-0 left-0"></canvas>
                     </div>
@@ -121,13 +117,13 @@
                                 class="w-full bg-transparent border-b border-border focus:border-white text-sm py-1 outline-none font-mono text-center placeholder-white/20">
                             <div class="grid grid-cols-2 gap-sm pt-2">
                                 <div class="flex flex-col gap-1">
-                                    <label class="text-[10px] text-text-muted text-center">正向活化能 Ea (kJ)</label>
-                                    <input type="number" id="reaction-1-ea-forward" value="25"
+                                    <label class="text-[10px] text-text-muted text-center">正向 Ea</label>
+                                    <input type="number" id="reaction-1-ea-forward" value="30"
                                         class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
                                 </div>
                                 <div class="flex flex-col gap-1">
-                                    <label class="text-[10px] text-text-muted text-center">逆向活化能 Ea (kJ)</label>
-                                    <input type="number" id="reaction-1-ea-reverse" value="40"
+                                    <label class="text-[10px] text-text-muted text-center">逆向 Ea</label>
+                                    <input type="number" id="reaction-1-ea-reverse" value="30"
                                         class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
                                 </div>
                             </div>
@@ -181,7 +177,6 @@
                         <div class="h-px flex-1 bg-border"></div>
                     </h2>
                     <div id="substances-container" class="space-y-xs">
-                        <!-- Dynamic Content Here via JS -->
                         <div class="text-xs text-text-muted text-center py-4 italic">
                             正在解析反应方程...
                         </div>

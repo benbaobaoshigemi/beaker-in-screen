@@ -81,6 +81,14 @@ export class SimulationView {
             this.particles = particles;
         });
 
+        // 接收来自后端的能量统计（归一化）：包含 mean/std/threshold/nSigma
+        stateManager.subscribe('energyStats', (stats) => {
+            if (stats && typeof stats.threshold === 'number') {
+                // 使用服务端计算的物理阈值（normalized）
+                this.highlightEnergyThreshold = Math.max(0, Math.min(1, stats.threshold));
+            }
+        });
+
         stateManager.subscribe('simulation', (simulation) => {
             if (this.statsTime) {
                 this.statsTime.textContent = `时间: ${simulation.time.toFixed(2)}`;

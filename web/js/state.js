@@ -132,6 +132,11 @@ class StateManager {
         // 更新粒子
         this.update('particles', serverState.particles);
 
+        // 更新能量统计（用于前端高亮阈值）
+        if (serverState.energyStats) {
+            this.update('energyStats', serverState.energyStats);
+        }
+
         // 更新浓度（新格式：substanceCounts）
         const substanceCounts = serverState.substanceCounts || {};
         this.update('concentration', {

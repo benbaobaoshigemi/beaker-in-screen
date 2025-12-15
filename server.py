@@ -235,12 +235,29 @@ class PhysicsEngineAdapter:
         for substance in self.config.substances:
             count = int(np.sum(self.types == substance.type_id))
             substance_counts[substance.id] = count
-        
+        # 高能阈值（硬编码但有物理意义）：
+        # 以 1000K 参考温度下的“平均动能”对应的归一化能量作为阈值。
+        # 这样阈值是常量，但粒子能量分布随温度线性缩放 -> 不同温度高亮数量会明显不同。
+        kb = self.config.boltzmann_k
+        max_temp = 1000.0
+        sigma_max = math.sqrt(kb * max_temp / self.mass)
+        max_speed = 3 * sigma_max * math.sqrt(3)
+        max_energy_absolute = 0.5 * self.mass * max_speed ** 2
+
+        mean_energy_ref = 1.5 * kb * max_temp
+        threshold_norm = float(np.clip(mean_energy_ref / max_energy_absolute, 0.0, 1.0))
+
+        energy_stats = {
+            "threshold": round(float(threshold_norm), 6),
+            "refTemp": max_temp,
+        }
+
         return {
             "time": self.sim_time,
             "substanceCounts": substance_counts,
             "activeCount": self.get_active_count(),
             "particles": self.get_visible_particles(),
+            "energyStats": energy_stats,
         }
     
     def reset(self):
