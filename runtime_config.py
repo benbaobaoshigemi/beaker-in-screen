@@ -195,7 +195,7 @@ class RuntimeConfig:
     mass: float = 1.0
     boltzmann_k: float = 0.1
     dt: float = 0.002
-    slice_thickness: float = 20.0  # 显示区域厚度（50% of box_size）
+    slice_thickness: float = 5.0  # 显示区域厚度（25% of box_size）
     
     # 粒子管理
     max_particles: int = 20000
@@ -225,7 +225,7 @@ class RuntimeConfig:
                 reactant_types=[0, 0],  # 2A
                 product_types=[1],       # B
                 ea_forward=30.0,
-                ea_reverse=30.0,
+                ea_reverse=60.0,  # 逆反应活化能改为60
             ),
         ]
     

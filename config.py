@@ -2,7 +2,7 @@ import math
 
 # --- Physics Constants ---
 NUM_PARTICLES = 10000
-BOX_SIZE = 40.0  # Reduced from 100.0 to increase density for collisions
+BOX_SIZE = 20.0  # Reduced from 40.0 to increase density for collisions
 RADIUS = 0.3     # Slightly smaller radius
 MASS = 1.0
 

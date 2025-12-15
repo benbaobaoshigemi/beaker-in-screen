@@ -320,7 +320,7 @@ def simulation_loop():
                 time.sleep(0.1)
                 continue
             
-            # 每帧10步物理更新（平衡精度与性能）
+            # 每帧10步物理更新
             steps_per_frame = 10
             for _ in range(steps_per_frame):
                 physics_engine.update()
@@ -381,13 +381,27 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    """客户端断开"""
+    """客户端断开时关闭服务器
+    
+    实现前端与后端的绑定：当前端页面关闭时，后端自动退出
+    """
     global simulation_running
     
     with simulation_lock:
         simulation_running = False
         
-    print('[Server] Client disconnected - Simulation stopped')
+    print('[Server] Client disconnected - 服务器即将关闭')
+    
+    # 延迟关闭，让响应先发送完成
+    import threading
+    def shutdown():
+        import time
+        time.sleep(0.5)
+        print('[Server] 服务器已关闭')
+        import os
+        os._exit(0)
+    
+    threading.Thread(target=shutdown, daemon=True).start()
 
 
 @socketio.on('start')
@@ -511,4 +525,21 @@ if __name__ == '__main__':
     print(f" http://localhost:{PORT}")
     print("=" * 50)
     
+    # --- 物理引擎预热 (触发 Numba JIT 编译) ---
+    try:
+        print("[Server] 正在预热物理引擎 (Numba JIT 编译可能需要几秒钟)...")
+        # 创建临时引擎
+        warmup_engine = PhysicsEngineAdapter(runtime_config)
+        # 运行几次物理步，触发 update_physics 及其子函数的编译
+        for _ in range(5):
+            warmup_engine.update()
+        # 触发 get_visible_particles 及相关计算的编译（如果有）
+        warmup_engine.get_visible_particles()
+        print("[Server] 物理引擎预热完成！启动后将无卡顿。")
+    except Exception as e:
+        print(f"[Server] 预热警告: {e}")
+        import traceback
+        traceback.print_exc()
+    # ----------------------------------------
+
     socketio.run(app, host='0.0.0.0', port=PORT, debug=False)

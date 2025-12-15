@@ -182,7 +182,11 @@ export class ControlPanel {
         const pauseBtn = document.getElementById('btn-pause');
         const resetBtn = document.getElementById('btn-reset');
 
+        // 初始禁用start按钮，等待WebSocket连接
         if (startBtn) {
+            startBtn.disabled = true;
+            startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+
             startBtn.addEventListener('click', () => {
                 // 仅在首次启动时发送配置，暂停后恢复不需要重新发送
                 const simState = stateManager.getState().simulation;
@@ -193,6 +197,19 @@ export class ControlPanel {
                 stateManager.update('simulation', { started: true });
             });
         }
+
+        // 监听WebSocket连接状态，启用/禁用start按钮
+        stateManager.subscribe('connection', (conn) => {
+            if (startBtn) {
+                if (conn.connected) {
+                    startBtn.disabled = false;
+                    startBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+                } else {
+                    startBtn.disabled = true;
+                    startBtn.classList.add('opacity-50', 'cursor-not-allowed');
+                }
+            }
+        });
 
         if (pauseBtn) {
             pauseBtn.addEventListener('click', () => wsManager.pause());

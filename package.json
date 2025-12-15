@@ -8,5 +8,8 @@
     },
     "devDependencies": {
         "tailwindcss": "^3.4.0"
+    },
+    "dependencies": {
+        "pixi.js": "^8.14.3"
     }
 }

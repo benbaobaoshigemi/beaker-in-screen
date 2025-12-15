@@ -6,9 +6,11 @@
 import { wsManager } from './websocket.js';
 import { stateManager } from './state.js';
 import { ControlPanel } from './ui/controlPanel.js';
-import { SimulationView } from './ui/simulationView.js';
+// GPU加速渲染器替换Canvas 2D渲染器
+import { SimulationViewGPU as SimulationView } from './ui/simulationViewGPU.js';
 import { ConcentrationChart } from './ui/concentrationChart.js';
 import { RateChart } from './ui/rateChart.js';
+
 
 /**
  * 应用类

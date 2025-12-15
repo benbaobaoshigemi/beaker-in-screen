@@ -51,12 +51,14 @@ class WebSocketManager {
             console.log('[WebSocket] Connected - setting connected=true');
             this.connected = true;
             this.reconnectAttempts = 0;
+            stateManager.update('connection', { connected: true });
         });
 
         // 断开连接
         this.socket.on('disconnect', (reason) => {
             console.log('[WebSocket] Disconnected:', reason);
             this.connected = false;
+            stateManager.update('connection', { connected: false });
         });
 
         // 连接错误
@@ -85,6 +87,11 @@ class WebSocketManager {
 
         // 接收状态更新
         this.socket.on('state_update', (data) => {
+            // 简单判断：如果模拟刚开始运行且时间很短，可能是第一帧
+            if (data.simulation && data.simulation.running && data.simulation.time < 0.1) {
+                // 注意：这里可能会在每次暂停恢复后重置时间时触发，仅作调试参考
+                console.timeEnd('Startup-to-FirstData');
+            }
             stateManager.updateFromServer(data);
             // 不再生成理论曲线
         });
@@ -130,6 +137,7 @@ class WebSocketManager {
         console.log('[WebSocket] start() called, socket:', !!this.socket, 'connected:', this.connected);
         if (this.socket && this.connected) {
             console.log('[WebSocket] Emitting start event');
+            console.time('Startup-to-FirstData'); // 开始计时：从点击启动到收到第一帧数据
             this.socket.emit('start');
         } else {
             console.error('[WebSocket] Cannot start - not connected!');
