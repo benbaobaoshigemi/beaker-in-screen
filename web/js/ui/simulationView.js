@@ -14,7 +14,7 @@ import { stateManager } from '../state.js';
 export class SimulationView {
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
-        this.ctx = this.canvas.getContext('2d');
+        this.ctx = this.canvas.getContext('2d', { alpha: false });
 
         // 性能统计
         this.frameCount = 0;
@@ -33,7 +33,10 @@ export class SimulationView {
         this.glowTextureB = null;
         this.lastRadiusA = 0;
         this.lastRadiusB = 0;
-        this.cachedThreshold = null;
+
+        // 高能高亮阈值（服务端 energy 已按 1000K 上限归一化到 [0,1]）
+        // 采用“绝对阈值”而非分位数阈值，确保 100K/1000K 高亮数量有明显变化
+        this.highlightEnergyThreshold = 0.10;
 
         this.init();
     }
@@ -146,6 +149,14 @@ export class SimulationView {
         const particles = this.particles;
         const config = stateManager.getState().config;
         const substances = config.substances || [];
+
+        // 预构建 typeId -> substance 映射，避免在热点循环中反复 find
+        const substanceByType = new Map();
+        for (const s of substances) {
+            if (s && typeof s.typeId === 'number') {
+                substanceByType.set(s.typeId, s);
+            }
+        }
         const boxSize = CONFIG.SIMULATION.BOX_SIZE;
         const screenScale = Math.min(width, height);
 
@@ -182,39 +193,22 @@ export class SimulationView {
             ctx.fill();
         };
 
-        // 计算 Top 20% 能量阈值
-        let threshold = 1.0;
-        if (particles.length > 0) {
-            // 每 10 帧更新一次阈值，避免每帧排序
-            if (!this.cachedThreshold || this.frameCount % 10 === 0) {
-                const sampleSize = Math.min(particles.length, 200);
-                const samples = new Float32Array(sampleSize);
-                const step = Math.max(1, Math.floor(particles.length / sampleSize));
-                for (let i = 0; i < sampleSize; i++) {
-                    const p = particles[Math.min(i * step, particles.length - 1)];
-                    samples[i] = p.energy !== undefined ? p.energy : 0.5;
-                }
-                samples.sort();
-                threshold = samples[Math.floor(sampleSize * 0.8)];
-                this.cachedThreshold = threshold;
-            } else {
-                threshold = this.cachedThreshold;
-            }
-        }
+        // 高能粒子判定阈值：绝对阈值（随温度改变能量整体水平，从而改变高亮数量）
+        const threshold = this.highlightEnergyThreshold;
 
         // 第二遍：绘制高能粒子辉光（使用预渲染纹理）
         ctx.globalCompositeOperation = 'lighter';
 
         for (let i = 0; i < particles.length; i++) {
             const p = particles[i];
-            const energy = p.energy !== undefined ? p.energy : 0.5;
+            const energy = p.energy !== undefined ? p.energy : 0;
 
             if (energy >= threshold) {
                 const x = p.x * scaleX;
                 const y = p.y * scaleY;
 
                 // 从缓存获取辉光纹理
-                const substance = substances.find(s => s.typeId === p.type);
+                const substance = substanceByType.get(p.type);
                 if (!substance) continue;
 
                 const physicsRadius = substance.radius || 0.15;

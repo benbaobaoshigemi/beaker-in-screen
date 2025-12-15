@@ -4,194 +4,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>化学反应粒子模拟器</title>
-    <meta name="description" content="基于 Arrhenius 动力学的化学反应粒子模拟器，支持实时参数调节和可视化">
-
-    <!-- 字体 -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-
-    <!-- Tailwind CSS 输出 -->
+    <title>Beaker In Screen - 粒子动力学模拟</title>
     <link rel="stylesheet" href="css/output.css">
+    <!-- 使用本地下载的 Socket.IO 客户端，确保稳定性和版本兼容 -->
+    <script src="js/socket.io.min.js"></script>
+    <script type="module" src="js/main.js"></script>
 </head>
 
-<body class="bg-bg text-text-primary font-sans text-md leading-normal min-h-screen overflow-hidden">
-    <div class="grid grid-cols-app gap-md p-md h-screen max-w-app mx-auto">
-        <!-- 左侧列 -->
-        <div class="flex flex-col gap-md min-h-0 overflow-hidden">
-            <!-- 上半部分: 属性面板 + 控制面板 -->
-            <div class="grid grid-cols-top-row gap-md">
-                <!-- 属性面板（模拟开始后锁定）-->
-                <div class="bg-surface border border-border rounded-panel p-md flex flex-col overflow-y-auto max-h-[400px]"
-                    id="properties-panel">
-                    <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">
-                        属性 <span class="text-xs text-text-muted ml-xs lock-indicator" id="lock-indicator"></span>
-                    </h3>
+<body class="bg-bg text-text-primary h-screen overflow-hidden font-sans selection:bg-border selection:text-white">
 
-                    <!-- 反应配置区 -->
-                    <div class="mb-md">
-                        <h4 class="text-sm font-medium text-text-secondary mb-sm">反应配置</h4>
-                        <div class="flex flex-col gap-sm" id="reactions-container">
-                            <!-- 反应 1 -->
-                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
-                                <div class="flex gap-sm items-center">
-                                    <span class="text-xs text-text-muted w-8">R1:</span>
-                                    <input type="text"
-                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
-                                        id="reaction-1-eq" placeholder="如: 2A=B" value="2A=B">
-                                </div>
-                                <div class="grid grid-cols-2 gap-sm">
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea正:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-1-ea-forward" value="30" min="1" max="100">
-                                    </div>
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea逆:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-1-ea-reverse" value="30" min="1" max="100">
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- 反应 2 -->
-                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
-                                <div class="flex gap-sm items-center">
-                                    <span class="text-xs text-text-muted w-8">R2:</span>
-                                    <input type="text"
-                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
-                                        id="reaction-2-eq" placeholder="可选">
-                                </div>
-                                <div class="grid grid-cols-2 gap-sm">
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea正:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-2-ea-forward" value="30" min="1" max="100">
-                                    </div>
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea逆:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-2-ea-reverse" value="30" min="1" max="100">
-                                    </div>
-                                </div>
-                            </div>
-                            <!-- 反应 3 -->
-                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
-                                <div class="flex gap-sm items-center">
-                                    <span class="text-xs text-text-muted w-8">R3:</span>
-                                    <input type="text"
-                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
-                                        id="reaction-3-eq" placeholder="可选">
-                                </div>
-                                <div class="grid grid-cols-2 gap-sm">
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea正:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-3-ea-forward" value="30" min="1" max="100">
-                                    </div>
-                                    <div class="flex items-center gap-xs">
-                                        <span class="text-xs text-text-muted">Ea逆:</span>
-                                        <input type="number"
-                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
-                                            id="reaction-3-ea-reverse" value="30" min="1" max="100">
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+    <div class="w-full h-full max-w-app mx-auto p-md grid grid-cols-app gap-md">
 
-                    <!-- 物质配置区（动态生成）-->
-                    <div>
-                        <h4 class="text-sm font-medium text-text-secondary mb-sm">物质配置 <span
-                                class="text-xs text-text-muted">(从反应解析)</span></h4>
-                        <div class="flex flex-col gap-sm" id="substances-container">
-                            <!-- 动态生成 -->
-                        </div>
-                    </div>
-                </div>
+        <!-- 左侧：可视化与图表 -->
+        <div class="flex flex-col gap-md h-full min-h-0">
+            <!-- 模拟视窗 -->
+            <!-- 模拟视窗 (Space Share) -->
+            <div class="relative flex-1 bg-surface rounded-panel border border-border overflow-hidden group">
+                <!-- 确保这里是 Canvas -->
+                <canvas id="simulation-canvas" class="w-full h-full block"></canvas>
 
-                <!-- 控制面板（运行时可调）-->
-                <div class="bg-surface border border-border rounded-panel p-md flex flex-col min-h-[180px]"
-                    id="control-panel">
-                    <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">控制</h3>
-
-                    <!-- 温度滑块 -->
-                    <div class="flex flex-col gap-xs mb-lg">
-                        <label class="flex justify-between items-center text-sm text-text-secondary">
-                            <span>温度 T (K)</span>
-                            <span class="font-medium text-text-primary tabular-nums" id="temp-value">300</span>
-                        </label>
-                        <input type="range" id="temp-slider" min="200" max="500" step="10" value="300">
-                    </div>
-
-                    <!-- 控制按钮（纵向排列）-->
-                    <div class="flex flex-col gap-sm mt-auto">
-                        <button
-                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
-                            id="btn-start">启动</button>
-                        <button
-                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
-                            id="btn-pause">暂停</button>
-                        <button
-                            class="w-full px-md py-sm bg-surface hover:bg-surface-hover border border-border rounded-lg text-sm cursor-pointer transition-colors"
-                            id="btn-reset">重置</button>
-                    </div>
+                <!-- 悬浮状态信息 -->
+                <div
+                    class="absolute top-sm left-sm bg-black/60 backdrop-blur px-sm py-xs rounded border border-white/10 text-xs text-text-muted pointer-events-none select-none">
+                    FPS: <span id="stats-fps" class="text-text-primary">--</span> |
+                    时间: <span id="stats-time" class="text-text-primary">0.00</span>
                 </div>
             </div>
 
-            <!-- 下半部分: 模拟显示 -->
-            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
-                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">模拟显示</h3>
-                <div class="flex-1 min-h-0 relative canvas-container">
-                    <canvas id="simulation-canvas"></canvas>
+            <!-- 图表区域 -->
+            <!-- 图表区域 (Space Share) -->
+            <div class="flex-1 grid grid-cols-2 gap-md shrink-0 min-h-0">
+                <!-- 浓度图 -->
+                <div
+                    class="bg-surface rounded-panel border border-border p-sm flex flex-col relative w-full h-full overflow-hidden">
+                    <div class="flex justify-between items-center mb-xs px-xs shrink-0">
+                        <h3 class="text-sm font-medium text-text-secondary">粒子数量 (Count)</h3>
+                        <div id="concentration-values" class="flex gap-2 text-[10px] font-mono text-text-muted"></div>
+                        <div id="concentration-legend" class="flex gap-2 text-xs"></div>
+                    </div>
+                    <!-- 外层div用于布局，内部 canvas 填满 -->
+                    <div class="flex-1 relative w-full min-h-0">
+                        <canvas id="concentration-chart" class="w-full h-full block absolute top-0 left-0"></canvas>
+                    </div>
                 </div>
-                <div class="flex justify-between text-xs text-text-muted mt-sm">
-                    <span id="stats-time">时间: 0.00</span>
-                    <span id="stats-fps">FPS: --</span>
+
+                <!-- 速率图 -->
+                <div
+                    class="bg-surface rounded-panel border border-border p-sm flex flex-col relative w-full h-full overflow-hidden">
+                    <div class="flex justify-between items-center mb-xs px-xs shrink-0">
+                        <h3 class="text-sm font-medium text-text-secondary">反应速率</h3>
+                        <div id="rate-legend" class="flex gap-1 items-center"></div>
+                        <div class="flex gap-2 text-[10px] font-mono text-text-muted">
+                            <span id="rate-current">速率: --</span>
+                        </div>
+                    </div>
+                    <div class="flex-1 relative w-full min-h-0">
+                        <canvas id="rate-chart" class="w-full h-full block absolute top-0 left-0"></canvas>
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- 右侧列 -->
-        <div class="flex flex-col gap-md min-h-0 overflow-hidden">
-            <!-- 反应速率图 -->
-            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
-                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">反应速率图</h3>
-                <div class="flex-1 min-h-0 relative canvas-container">
-                    <canvas id="rate-chart"></canvas>
-                </div>
-                <div class="flex justify-between text-xs text-text-muted mt-sm">
-                    <span id="rate-current">当前速率: --</span>
-                    <span id="rate-k">k = --</span>
-                </div>
+        <!-- 右侧：控制面板 -->
+        <div class="bg-surface rounded-panel border border-border flex flex-col h-full overflow-hidden">
+            <div class="p-md border-b border-border">
+                <h1 class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-white to-gray-400">
+                    Beaker In Screen
+                </h1>
+                <p class="text-xs text-text-muted mt-1">First Principles Chemical Dynamics</p>
             </div>
 
-            <!-- 物质浓度时变图 -->
-            <div class="bg-surface border border-border rounded-panel p-md flex flex-col flex-1 min-h-0">
-                <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">物质浓度时变图</h3>
-                <div class="flex-1 min-h-0 relative canvas-container">
-                    <canvas id="concentration-chart"></canvas>
+            <div class="flex-1 overflow-y-auto p-md space-y-lg scrollbar-hide">
+
+                <!-- 播放控制 -->
+                <div class="flex gap-sm">
+                    <button id="btn-start"
+                        class="flex-1 bg-white text-black hover:bg-gray-200 py-2 rounded font-medium transition-colors text-sm active:scale-95 transform">
+                        开始模拟
+                    </button>
+                    <button id="btn-pause"
+                        class="flex-1 bg-surface-hover border border-border hover:border-text-secondary text-text-primary py-2 rounded font-medium transition-colors text-sm active:scale-95 transform">
+                        暂停
+                    </button>
+                    <button id="btn-reset"
+                        class="w-10 bg-surface-hover border border-border hover:border-red-500 hover:text-red-500 text-text-muted rounded flex items-center justify-center transition-colors active:scale-95 transform">
+                        ↺
+                    </button>
                 </div>
-                <div class="flex flex-wrap gap-md mt-sm text-xs" id="concentration-legend">
-                    <!-- 动态生成 -->
+
+                <!-- 温度控制 -->
+                <div class="bg-black/20 p-sm rounded border border-border/30 space-y-sm">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-text-secondary">系统温度 T</span>
+                        <span class="font-mono text-text-primary"><span id="temp-value">300</span> K</span>
+                    </div>
+                    <input type="range" id="temp-slider" min="100" max="1000" value="300" step="10"
+                        class="w-full h-1 bg-border rounded-lg appearance-none cursor-pointer accent-white">
+                    <div class="flex justify-between text-[10px] text-text-muted">
+                        <span>100K</span>
+                        <span>1000K</span>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-md text-xs text-text-muted mt-sm" id="concentration-values">
-                    <!-- 动态生成 -->
+
+                <!-- 反应配置 -->
+                <div class="space-y-sm">
+                    <h2
+                        class="text-sm font-medium text-text-secondary uppercase tracking-wider flex items-center gap-2">
+                        <span>反应方程式</span>
+                        <div class="h-px flex-1 bg-border"></div>
+                    </h2>
+
+                    <div class="space-y-md">
+                        <!-- 反应 1 -->
+                        <div class="bg-black/30 rounded p-sm border border-border/50 space-y-xs">
+                            <input type="text" id="reaction-1-eq" value="2A = B" placeholder="e.g. A + B = C"
+                                class="w-full bg-transparent border-b border-border focus:border-white text-sm py-1 outline-none font-mono text-center placeholder-white/20">
+                            <div class="grid grid-cols-2 gap-sm pt-2">
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">正向活化能 Ea (kJ)</label>
+                                    <input type="number" id="reaction-1-ea-forward" value="25"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">逆向活化能 Ea (kJ)</label>
+                                    <input type="number" id="reaction-1-ea-reverse" value="40"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 反应 2 -->
+                        <div
+                            class="bg-black/30 rounded p-sm border border-border/50 space-y-xs opacity-80 hover:opacity-100 transition-opacity">
+                            <input type="text" id="reaction-2-eq" value="" placeholder="e.g. B = C (选填)"
+                                class="w-full bg-transparent border-b border-border focus:border-white text-sm py-1 outline-none font-mono text-center placeholder-white/20">
+                            <div class="grid grid-cols-2 gap-sm pt-2">
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">正向 Ea</label>
+                                    <input type="number" id="reaction-2-ea-forward" value="30"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">逆向 Ea</label>
+                                    <input type="number" id="reaction-2-ea-reverse" value="30"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 反应 3 -->
+                        <div
+                            class="bg-black/30 rounded p-sm border border-border/50 space-y-xs opacity-60 hover:opacity-100 transition-opacity">
+                            <input type="text" id="reaction-3-eq" value="" placeholder="e.g. C = D (选填)"
+                                class="w-full bg-transparent border-b border-border focus:border-white text-sm py-1 outline-none font-mono text-center placeholder-white/20">
+                            <div class="grid grid-cols-2 gap-sm pt-2">
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">正向 Ea</label>
+                                    <input type="number" id="reaction-3-ea-forward" value="30"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                                <div class="flex flex-col gap-1">
+                                    <label class="text-[10px] text-text-muted text-center">逆向 Ea</label>
+                                    <input type="number" id="reaction-3-ea-reverse" value="30"
+                                        class="bg-surface border border-border rounded px-2 py-1 text-xs text-center focus:border-white outline-none">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
+
+                <!-- 物质列表（动态） -->
+                <div class="space-y-sm">
+                    <h2
+                        class="text-sm font-medium text-text-secondary uppercase tracking-wider flex items-center gap-2">
+                        <span>物质属性配置</span>
+                        <div class="h-px flex-1 bg-border"></div>
+                    </h2>
+                    <div id="substances-container" class="space-y-xs">
+                        <!-- Dynamic Content Here via JS -->
+                        <div class="text-xs text-text-muted text-center py-4 italic">
+                            正在解析反应方程...
+                        </div>
+                    </div>
+                </div>
+
             </div>
         </div>
     </div>
-
-    <!-- Socket.IO -->
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-
-    <!-- 应用脚本 -->
-    <script type="module" src="js/main.js"></script>
 </body>
 
 </html>

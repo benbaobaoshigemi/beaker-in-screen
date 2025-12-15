@@ -107,7 +107,7 @@ class ReactionConfig:
         
         left = format_side(self.reactant_types)
         right = format_side(self.product_types)
-        return f"{left} ⇌ {right}"
+        return f"{left} = {right}"
     
     def to_dict(self, substances: List[SubstanceConfig] = None) -> Dict[str, Any]:
         return {
@@ -126,7 +126,8 @@ class ReactionConfig:
 def parse_reaction_equation(equation: str, substances: List[SubstanceConfig]) -> Optional[ReactionConfig]:
     """解析反应式字符串，如 "2A=B" 或 "A+B=C" """
     id_to_type = {s.id.upper(): s.type_id for s in substances}
-    eq = equation.replace(" ", "").upper()
+    # 支持多种箭头符号：ASCII (->) 和 Unicode (→, ⇌)
+    eq = equation.replace(" ", "").replace("→", "=").replace("⇌", "=").replace("->", "=").upper()
     
     if "=" not in eq:
         return None
@@ -194,7 +195,7 @@ class RuntimeConfig:
     mass: float = 1.0
     boltzmann_k: float = 0.1
     dt: float = 0.002
-    slice_thickness: float = 4.0
+    slice_thickness: float = 20.0  # 显示区域厚度（50% of box_size）
     
     # 粒子管理
     max_particles: int = 20000
@@ -261,6 +262,13 @@ class RuntimeConfig:
                 p0 = rxn.product_types[0] if len(rxn.product_types) > 0 else -1
                 p1 = rxn.product_types[1] if len(rxn.product_types) > 1 else -1
                 reactions_2.append([r0, r1, p0, p1, rxn.ea_forward, rxn.ea_reverse])
+                
+                # 自动生成 2级 逆反应 (如 A+B=C+D 或 2A=2B)
+                if len(rxn.product_types) == 2:
+                    r0_rev, r1_rev = rxn.product_types[0], rxn.product_types[1]
+                    p0_rev, p1_rev = rxn.reactant_types[0], rxn.reactant_types[1]
+                    # 对于逆反应，交换 EaForward 和 EaReverse
+                    reactions_2.append([r0_rev, r1_rev, p0_rev, p1_rev, rxn.ea_reverse, rxn.ea_forward])
         
         if not reactions_2:
             return np.zeros((0, 6), dtype=np.float64)
@@ -278,7 +286,12 @@ class RuntimeConfig:
                 r0 = rxn.reactant_types[0]
                 p0 = rxn.product_types[0] if len(rxn.product_types) > 0 else -1
                 p1 = rxn.product_types[1] if len(rxn.product_types) > 1 else -1
+                # 正向反应: A -> B
                 reactions_1.append([r0, p0, p1, rxn.ea_forward, rxn.frequency_factor])
+                
+                # 自动生成逆反应: B -> A (仅当产物单一时)
+                if len(rxn.product_types) == 1:
+                    reactions_1.append([p0, r0, -1, rxn.ea_reverse, rxn.frequency_factor])
         
         # 自动生成逆反应（一级分解的逆反应）
         for rxn in self.reactions:

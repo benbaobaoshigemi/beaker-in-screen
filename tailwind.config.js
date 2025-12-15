@@ -29,17 +29,17 @@ module.exports = {
                 'sans': ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'sans-serif'],
             },
             fontSize: {
-                'xs': '10px',
-                'sm': '12px',
-                'md': '14px',
-                'lg': '16px',
-                'xl': '18px',
+                'xs': '12px',
+                'sm': '14px',
+                'md': '16px',
+                'lg': '18px',
+                'xl': '20px',
             },
             maxWidth: {
                 'app': '1600px',
             },
             gridTemplateColumns: {
-                'app': '1.3fr 1fr',
+                'app': '1fr 320px',
                 'top-row': '1.5fr 1fr',
                 'slider-pair': '1fr 1fr',
             },

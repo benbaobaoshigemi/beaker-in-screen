@@ -139,19 +139,104 @@ class StateManager {
             activeCount: serverState.activeCount || 0,
         });
 
+        // 检测是否重置 (服务器时间回退)
+        const serverTime = serverState.time;
+        if (serverTime < this.lastTime) {
+            this.state.chartData.concentrationHistory = [];
+            this.state.chartData.rateHistory = [];
+            this.lastRate = undefined;
+
+            // 重置速率平滑缓存，避免重置后用到旧历史造成时间/幅值假象
+            this.forwardRateHistory = undefined;
+            this.reverseRateHistory = undefined;
+            this.lastSubstanceCounts = undefined;
+        }
+
         // 图表数据：记录所有物质的浓度
         const chartData = this.state.chartData;
         chartData.concentrationHistory.push({
             time: serverState.time,
             counts: { ...substanceCounts },
         });
+        if (chartData.concentrationHistory.length > 1000) {
+            chartData.concentrationHistory.shift();
+        }
 
-        // 添加速率历史点（简化版：暂不计算速率）
-        chartData.rateHistory.push({
-            time: serverState.time,
-            forward: 0,
-            reverse: 0,
-        });
+        // 按物种计算正反应速率（消耗）和逆反应速率（生成）
+        const currentTime = serverState.time;
+        const rates = {};  // { substance: { forward: number, reverse: number } }
+
+        // 速率代表区间平均值：时间戳放在区间中点，避免曲线“滞后”
+        let rateTime = currentTime;
+        let hasValidRate = false;
+
+        if (this.lastTime > 0 && currentTime > this.lastTime) {
+            const dt = currentTime - this.lastTime;
+            rateTime = this.lastTime + dt / 2;
+            hasValidRate = true;
+
+            // 初始化 SMA 缓存
+            if (!this.forwardRateHistory) {
+                this.forwardRateHistory = {};
+            }
+            if (!this.reverseRateHistory) {
+                this.reverseRateHistory = {};
+            }
+            if (!this.lastSubstanceCounts) {
+                this.lastSubstanceCounts = {};
+            }
+
+            const smoothWindow = 15;
+
+            // 计算每个物种的正逆反应速率
+            for (const [substance, count] of Object.entries(substanceCounts)) {
+                const lastCount = this.lastSubstanceCounts[substance] || count;
+                const dN = count - lastCount;
+
+                // 正反应速率：消耗 (dN < 0)
+                const forwardRate = dN < 0 ? Math.abs(dN / dt) : 0;
+                // 逆反应速率：生成 (dN > 0)
+                const reverseRate = dN > 0 ? dN / dt : 0;
+
+                // SMA 平滑正反应速率
+                if (!this.forwardRateHistory[substance]) {
+                    this.forwardRateHistory[substance] = [];
+                }
+                this.forwardRateHistory[substance].push(forwardRate);
+                if (this.forwardRateHistory[substance].length > smoothWindow) {
+                    this.forwardRateHistory[substance].shift();
+                }
+                const fwdHistory = this.forwardRateHistory[substance];
+                const smoothedForward = fwdHistory.reduce((a, b) => a + b, 0) / fwdHistory.length;
+
+                // SMA 平滑逆反应速率
+                if (!this.reverseRateHistory[substance]) {
+                    this.reverseRateHistory[substance] = [];
+                }
+                this.reverseRateHistory[substance].push(reverseRate);
+                if (this.reverseRateHistory[substance].length > smoothWindow) {
+                    this.reverseRateHistory[substance].shift();
+                }
+                const revHistory = this.reverseRateHistory[substance];
+                const smoothedReverse = revHistory.reduce((a, b) => a + b, 0) / revHistory.length;
+
+                rates[substance] = {
+                    forward: smoothedForward,
+                    reverse: smoothedReverse,
+                };
+            }
+        }
+
+        this.lastTime = currentTime;
+        this.lastSubstanceCounts = { ...substanceCounts };
+
+        // 首帧/无 dt 时不推入空速率点，避免曲线出现“从 0 突跳”的视觉时间差
+        if (hasValidRate) {
+            chartData.rateHistory.push({
+                time: rateTime,
+                rates: rates,  // { substance: { forward, reverse } }
+            });
+        }
 
         // 限制历史长度
         const maxPoints = 600;
@@ -283,11 +368,19 @@ class StateManager {
     reset() {
         this.state.simulation.time = 0;
         this.state.particles = [];
+
+        // 兼容当前多物质实现：substanceCounts
+        const substances = this.state.config.substances || [];
+        const substanceCounts = {};
+        let totalActive = 0;
+        for (const s of substances) {
+            const count = Math.max(0, Math.round(s.initialCount || 0));
+            substanceCounts[s.id] = count;
+            totalActive += count;
+        }
         this.state.concentration = {
-            reactantCount: this.state.config.initialCountA || this.state.config.numParticles,
-            productCount: this.state.config.initialCountB || 0,
-            halfLifeForward: null,
-            halfLifeReverse: null,
+            substanceCounts,
+            activeCount: totalActive,
         };
         this.state.chartData = {
             concentrationHistory: [],
@@ -297,8 +390,11 @@ class StateManager {
         this.lastProductCount = 0;
         this.lastReactantCount = undefined;
         this.lastTime = 0;
-        this.forwardRateHistory = [];  // 清空正反应速率历史
-        this.reverseRateHistory = [];  // 清空逆反应速率历史
+
+        // 清空速率相关缓存（按物种）
+        this.forwardRateHistory = undefined;
+        this.reverseRateHistory = undefined;
+        this.lastSubstanceCounts = undefined;
 
         // 通知所有相关订阅者
         this.notify('simulation');

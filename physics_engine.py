@@ -258,6 +258,7 @@ def resolve_collisions_generic(pos, vel, types, head, next_particle, cell_divisi
     """
     n_reactions = len(reactions_2body)
     max_type = len(radii) - 1
+    reduced_mass = mass / 2.0  # Hoisted constant
     
     for cx in range(cell_divisions):
         for cy in range(cell_divisions):
@@ -311,7 +312,6 @@ def resolve_collisions_generic(pos, vel, types, head, next_particle, cell_divisi
                                             vn = dvx * nx + dvy * ny + dvz * nz
                                             
                                             if vn < 0:  # 接近中
-                                                reduced_mass = mass / 2.0
                                                 e_coll = 0.5 * reduced_mass * vn * vn
                                                 
                                                 # 遍历反应列表检查匹配

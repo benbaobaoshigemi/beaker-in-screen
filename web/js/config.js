@@ -21,7 +21,7 @@ export const CONFIG = {
         // Y 轴固定范围，不自动缩放
         CONCENTRATION: {
             Y_MIN: 0,
-            Y_MAX: 10000,  // 显示完整的 A 和 B 范围
+            Y_MAX: 20000,  // 显示完整的 A 和 B 范围
         },
         RATE: {
             Y_MIN: 0,

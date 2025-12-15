@@ -57,7 +57,7 @@ export class ControlPanel {
             const eq = eqInput.value.trim().toUpperCase();
             if (!eq) continue;
 
-            // 解析反应式中的物质
+            // 解析反应式中的物质 (限制 A-E)
             const matches = eq.match(/[A-E]/g);
             if (matches) {
                 matches.forEach(id => substanceIds.add(id));
@@ -160,10 +160,16 @@ export class ControlPanel {
         const tempValue = document.getElementById('temp-value');
 
         if (tempSlider) {
+            let debounceTimer;
             tempSlider.addEventListener('input', (e) => {
                 const value = e.target.value;
                 if (tempValue) tempValue.textContent = value;
-                wsManager.updateConfig({ temperature: parseFloat(value) });
+
+                // 防抖: 100ms
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    wsManager.updateConfig({ temperature: parseFloat(value) });
+                }, 100);
             });
         }
     }
@@ -178,7 +184,11 @@ export class ControlPanel {
 
         if (startBtn) {
             startBtn.addEventListener('click', () => {
-                this.sendConfig();
+                // 仅在首次启动时发送配置，暂停后恢复不需要重新发送
+                const simState = stateManager.getState().simulation;
+                if (!simState.started) {
+                    this.sendConfig();
+                }
                 wsManager.start();
                 stateManager.update('simulation', { started: true });
             });
@@ -221,8 +231,14 @@ export class ControlPanel {
             const eaReverseInput = document.getElementById(`reaction-${i}-ea-reverse`);
 
             if (!eqInput) continue;
-            const eq = eqInput.value.trim();
+            let eq = eqInput.value.trim();
             if (!eq) continue;
+
+            // 统一将各种箭头和等号替换为 ASCII 等号
+            eq = eq.replace(/→/g, '=')     // Unicode 右箭头
+                .replace(/⇌/g, '=')     // Unicode 双向箭头
+                .replace(/->/g, '=')     // ASCII 箭头
+                .replace(/＝/g, '=');    // 中文等号
 
             reactions.push({
                 equation: eq,

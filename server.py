@@ -56,6 +56,10 @@ class PhysicsEngineAdapter:
         self.reactions_1body = runtime_config.build_reactions_1body()
         self.radii = runtime_config.build_radii_array()
         
+        # DEBUG: 打印反应数组
+        print(f'[PhysicsEngine] 2-body reactions: {self.reactions_2body}')
+        print(f'[PhysicsEngine] 1-body reactions: {self.reactions_1body}')
+        
         # Cell 划分
         max_radius = max(self.radii) if len(self.radii) > 0 and max(self.radii) > 0 else 0.15
         self.cell_divs = int(self.box_size // (max_radius * 3.0))
@@ -128,7 +132,7 @@ class PhysicsEngineAdapter:
         
         if current_temp > 0:
             scale = math.sqrt(self.config.temperature / current_temp)
-            scale = np.clip(scale, 0.99, 1.01)
+            scale = np.clip(scale, 0.99, 1.01)  # Gentle thermostat
             self.vel[active_mask] *= scale
         
         # 1. 更新位置（只更新活跃粒子）
@@ -186,7 +190,8 @@ class PhysicsEngineAdapter:
         kinetic_energy = 0.5 * self.mass * speed_sq
         
         # 预计算常量
-        max_temp = 500.0
+        # 与前端温度滑条范围对齐，避免高温时 energy 归一化饱和
+        max_temp = 1000.0
         sigma_max = math.sqrt(self.config.boltzmann_k * max_temp / self.mass)
         max_speed = 3 * sigma_max * math.sqrt(3)
         max_energy_absolute = 0.5 * self.mass * max_speed ** 2
@@ -199,12 +204,29 @@ class PhysicsEngineAdapter:
         norm_y = visible_pos[:, 1] / self.box_size
         
         particles = [
-            {"x": float(norm_x[i]), "y": float(norm_y[i]), 
-             "type": int(visible_types[i]), "energy": float(normalized_energy[i])}
+            {"x": round(float(norm_x[i]), 3), "y": round(float(norm_y[i]), 3), 
+             "type": int(visible_types[i]), "energy": round(float(normalized_energy[i]), 3)}
             for i in range(n_visible)
         ]
         
         return particles
+
+    def rescale_velocities_to_target_temperature(self) -> None:
+        """立即将活跃粒子速度重标定到目标温度（用于临时调温，保证能量/高亮立刻响应）"""
+        active_mask = self.types >= 0
+        n_active = int(np.sum(active_mask))
+        if n_active <= 0:
+            return
+
+        v_sq = float(np.sum(self.vel[active_mask] ** 2))
+        current_temp = (self.mass * v_sq) / (3 * n_active * self.config.boltzmann_k)
+        if current_temp <= 0:
+            return
+
+        scale = math.sqrt(self.config.temperature / current_temp)
+        # 仅做安全钳制，避免极端数值导致爆炸
+        scale = float(np.clip(scale, 0.1, 10.0))
+        self.vel[active_mask] *= scale
     
     def get_state(self) -> Dict[str, Any]:
         """获取完整状态"""
@@ -223,7 +245,14 @@ class PhysicsEngineAdapter:
     
     def reset(self):
         """重置模拟"""
-        # 重新构建反应数组
+        self.reload_config()
+        
+        # 重新初始化粒子
+        self._init_particles()
+        self.sim_time = 0.0
+
+    def reload_config(self):
+        """重新加载配置（更新反应参数等）"""
         self.reactions_2body = self.config.build_reactions_2body()
         self.reactions_1body = self.config.build_reactions_1body()
         self.radii = self.config.build_radii_array()
@@ -234,9 +263,8 @@ class PhysicsEngineAdapter:
         if self.cell_divs < 1:
             self.cell_divs = 1
         
-        # 重新初始化粒子
-        self._init_particles()
-        self.sim_time = 0.0
+        # 仅更新参数，不重置粒子状态
+        pass
 
 
 # ============================================================================
@@ -395,10 +423,27 @@ def handle_reset():
 
 @socketio.on('update_config')
 def handle_update_config(data: Dict[str, Any]):
-    """更新运行时配置"""
+    """更新运行时配置
+    
+    快速路径：仅温度更新时不重新加载配置
+    """
     global physics_engine
     
+    # 检查是否仅为温度更新
+    is_temperature_only = list(data.keys()) == ['temperature']
+    
     runtime_config.update_from_dict(data)
+    
+    # 快速路径：仅温度更新
+    if is_temperature_only:
+        # 温度已经通过 update_from_dict 更新到 runtime_config
+        # physics_engine.config 引用了 runtime_config，所以无需额外操作
+        if physics_engine is not None:
+            with simulation_lock:
+                physics_engine.rescale_velocities_to_target_temperature()
+        emit('config', runtime_config.to_dict(), broadcast=True)
+        print(f'[Server] Temperature updated: {data["temperature"]}K')
+        return
     
     # 如果模拟未运行且更新涉及物质/反应配置，重建物理引擎
     should_preview = 'substances' in data or 'reactions' in data
@@ -408,6 +453,11 @@ def handle_update_config(data: Dict[str, Any]):
             physics_engine = PhysicsEngineAdapter(runtime_config)
             state = physics_engine.get_state()
             emit('state_update', state, broadcast=True)
+    
+    # 如果物理引擎已存在，热更新配置参数
+    if physics_engine is not None and not is_temperature_only:
+        with simulation_lock:
+            physics_engine.reload_config()
             
     emit('config', runtime_config.to_dict(), broadcast=True)
     print(f'[Server] Config updated: {list(data.keys())}')
