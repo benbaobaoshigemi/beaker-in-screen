@@ -132,72 +132,25 @@ class StateManager {
         // 更新粒子
         this.update('particles', serverState.particles);
 
-        // 更新浓度（含半衰期）
-        const concentration = {
-            reactantCount: serverState.reactantCount,
-            productCount: serverState.productCount,
-            halfLifeForward: serverState.halfLifeForward,
-            halfLifeReverse: serverState.halfLifeReverse,
-        };
-        this.update('concentration', concentration);
-
-        // 计算反应速率
-        const dt = serverState.time - this.lastTime;
-
-        // 正反应速率: A减少的速率 (正值表示正反应发生)
-        // 逆反应速率: A增加的速率 (正值表示逆反应发生)
-        let forwardRate = 0;
-        let reverseRate = 0;
-
-        if (dt > 0 && this.lastReactantCount !== undefined) {
-            const dA = serverState.reactantCount - this.lastReactantCount;
-            if (dA < 0) {
-                // A 减少 -> 正反应
-                forwardRate = -dA / dt;
-            } else if (dA > 0) {
-                // A 增加 -> 逆反应
-                reverseRate = dA / dt;
-            }
-        }
-
-        this.lastReactantCount = serverState.reactantCount;
-        this.lastProductCount = serverState.productCount;
-        this.lastTime = serverState.time;
-
-        // 速率平滑：使用移动平均（增大窗口提高平滑度）
-        if (!this.forwardRateHistory) {
-            this.forwardRateHistory = [];
-            this.reverseRateHistory = [];
-        }
-        this.forwardRateHistory.push(forwardRate);
-        this.reverseRateHistory.push(reverseRate);
-
-        const smoothWindow = 15;  // 15点移动平均（增大以提高平滑度）
-        if (this.forwardRateHistory.length > smoothWindow) {
-            this.forwardRateHistory.shift();
-        }
-        if (this.reverseRateHistory.length > smoothWindow) {
-            this.reverseRateHistory.shift();
-        }
-
-        const smoothedForward = this.forwardRateHistory.reduce((a, b) => a + b, 0) / this.forwardRateHistory.length;
-        const smoothedReverse = this.reverseRateHistory.reduce((a, b) => a + b, 0) / this.reverseRateHistory.length;
-
-        // 更新图表数据
-        const chartData = this.state.chartData;
-
-        // 添加浓度历史点
-        chartData.concentrationHistory.push({
-            time: serverState.time,
-            reactant: serverState.reactantCount,
-            product: serverState.productCount,
+        // 更新浓度（新格式：substanceCounts）
+        const substanceCounts = serverState.substanceCounts || {};
+        this.update('concentration', {
+            substanceCounts: substanceCounts,
+            activeCount: serverState.activeCount || 0,
         });
 
-        // 添加速率历史点（正反应和逆反应分开）
+        // 图表数据：记录所有物质的浓度
+        const chartData = this.state.chartData;
+        chartData.concentrationHistory.push({
+            time: serverState.time,
+            counts: { ...substanceCounts },
+        });
+
+        // 添加速率历史点（简化版：暂不计算速率）
         chartData.rateHistory.push({
             time: serverState.time,
-            forward: Math.max(0, smoothedForward),
-            reverse: Math.max(0, smoothedReverse),
+            forward: 0,
+            reverse: 0,
         });
 
         // 限制历史长度

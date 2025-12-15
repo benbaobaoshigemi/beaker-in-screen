@@ -16,10 +16,6 @@ export class ConcentrationChart {
         this.canvas = document.getElementById(canvasId);
         this.ctx = this.canvas.getContext('2d');
 
-        // DOM 元素
-        this.concentrationA = document.getElementById('concentration-a');
-        this.concentrationP = document.getElementById('concentration-p');
-
         // 数据
         this.data = [];
 
@@ -60,13 +56,15 @@ export class ConcentrationChart {
             this.data = chartData.concentrationHistory;
         });
 
+        // 动态更新浓度值显示
         stateManager.subscribe('concentration', (concentration) => {
-            if (this.concentrationA) {
-                this.concentrationA.textContent = `[A] = ${concentration.reactantCount}`;
-            }
-            if (this.concentrationP) {
-                this.concentrationP.textContent = `[B] = ${concentration.productCount}`;
-            }
+            const valuesContainer = document.getElementById('concentration-values');
+            if (!valuesContainer) return;
+
+            const counts = concentration.substanceCounts || {};
+            valuesContainer.innerHTML = Object.entries(counts)
+                .map(([id, count]) => `<span>[${id}] = ${count}</span>`)
+                .join('');
         });
     }
 
@@ -159,51 +157,48 @@ export class ConcentrationChart {
         ctx.restore();
 
         if (this.data.length < 2) {
-            // 数据不足时仍显示坐标轴，不绘制曲线
             return;
         }
 
         // 计算滚动偏移
-        // 时间窗口计算
         const visiblePoints = CONFIG.CHART.X_AXIS_VISIBLE_POINTS;
         const scrollOffset = Math.max(0, this.data.length - visiblePoints);
         const visibleData = this.data.slice(scrollOffset);
 
         if (visibleData.length < 2) return;
 
-        // 获取当前可视的时间范围
         const tStart = visibleData[0].time;
         const tEnd = visibleData[visibleData.length - 1].time;
         const timeSpan = tEnd - tStart;
 
-        // 如果时间跨度太小，避免除零
         if (timeSpan < 1e-9) return;
 
-        // Plot 宽度映射到时间跨度
         const pxPerSec = plotWidth / timeSpan;
 
-        /**
-         * 通用曲线绘制函数 (时间映射)
-         */
-        const drawTimeBasedCurve = (dataPoints, getValue, color, dashed = false, yMaxVal = yMax) => {
+        // 获取配置中的物质列表
+        const config = stateManager.getState().config;
+        const substances = config.substances || [];
+
+        // 为每个物质绘制曲线
+        for (const substance of substances) {
+            const id = substance.id;
+            const colorHue = substance.colorHue || 0;
+            const color = `hsl(${colorHue}, 70%, 50%)`;
+
             ctx.strokeStyle = color;
             ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
-            if (dashed) ctx.setLineDash([4, 4]);
-            else ctx.setLineDash([]);
-
+            ctx.setLineDash([]);
             ctx.beginPath();
 
             let firstPoint = true;
-            for (const point of dataPoints) {
-                // X 坐标严格基于点的时间戳
+            for (const point of visibleData) {
                 const t = point.time;
                 if (t < tStart || t > tEnd) continue;
 
                 const x = plotOriginX + (t - tStart) * pxPerSec;
-                const value = getValue(point);
-                const y = plotOriginY - (value / yMaxVal) * plotHeight;
+                const value = point.counts?.[id] || 0;
+                const y = plotOriginY - (value / yMax) * plotHeight;
 
-                // 简单的边界保护
                 if (x < plotOriginX - 10) continue;
                 if (x > width + 10) break;
 
@@ -215,21 +210,7 @@ export class ConcentrationChart {
                 }
             }
             ctx.stroke();
-            ctx.setLineDash([]);
-        };
-
-        // 1. 绘制实际数据 (A 和 B)
-        drawTimeBasedCurve(visibleData, p => p.reactant, curveColors.reactant, false);
-        drawTimeBasedCurve(visibleData, p => p.product, curveColors.product, false);
-
-        // 2. 绘制反应商曲线 (Q = [B]/[A], 白色, 使用右侧 Y 轴)
-        const getQ = (point) => {
-            if (point.reactant > 0) {
-                return Math.min(point.product / point.reactant, qMax);  // 限制最大值
-            }
-            return qMax;  // A=0 时 Q=∞，显示为最大值
-        };
-        drawTimeBasedCurve(visibleData, getQ, '#ffffff', false, qMax);
+        }
     }
 }
 

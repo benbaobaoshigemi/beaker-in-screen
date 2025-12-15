@@ -20,11 +20,13 @@ from runtime_config import RuntimeConfig
 # 动态导入物理引擎所需的配置
 import config as static_config
 
-# 提前导入物理引擎函数，避免在循环中重复导入
+# 导入物理引擎函数
 from physics_engine import (
     update_positions_numba, 
     build_cell_list, 
-    resolve_collisions
+    resolve_collisions,
+    resolve_collisions_generic,
+    process_1body_reactions
 )
 
 # ============================================================================
@@ -34,28 +36,28 @@ from physics_engine import (
 class PhysicsEngineAdapter:
     """
     物理引擎适配器
-    封装原有物理引擎，支持可逆反应配置
-    
-    可逆反应: 2A ⇌ 2B
+    支持一级/二级反应，粒子激活/失活
     """
     
     def __init__(self, runtime_config: RuntimeConfig):
         self.config = runtime_config
         
-        # 从可逆反应配置获取参数
-        rev_config = runtime_config.reversible_reaction
-        self.n = rev_config.get_total_particles()
-        self.initial_count_a = rev_config.initial_count_a
-        self.initial_count_b = rev_config.initial_count_b
+        # 粒子数管理
+        self.max_particles = runtime_config.max_particles
+        self.initial_active = runtime_config.get_total_initial_particles()
         
+        # 系统参数
         self.box_size = runtime_config.box_size
-        self.radius_a = rev_config.radius_a
-        self.radius_b = rev_config.radius_b
         self.mass = runtime_config.mass
         self.dt = runtime_config.dt
         
-        # Cell 划分（使用较大的半径）
-        max_radius = max(self.radius_a, self.radius_b)
+        # 构建反应数组
+        self.reactions_2body = runtime_config.build_reactions_2body()
+        self.reactions_1body = runtime_config.build_reactions_1body()
+        self.radii = runtime_config.build_radii_array()
+        
+        # Cell 划分
+        max_radius = max(self.radii) if len(self.radii) > 0 and max(self.radii) > 0 else 0.15
         self.cell_divs = int(self.box_size // (max_radius * 3.0))
         if self.cell_divs < 1:
             self.cell_divs = 1
@@ -65,122 +67,111 @@ class PhysicsEngineAdapter:
         
         # 模拟时间
         self.sim_time = 0.0
-        
-        # 半衰期跟踪
-        self.half_life_forward_detected = False
-        self.half_life_reverse_detected = False
-        self.initial_a_count = self.initial_count_a
-        self.initial_b_count = self.initial_count_b
-        
+    
     def _init_particles(self):
-        """初始化粒子位置和速度"""
-        n = self.n
+        """初始化粒子数组（预分配）"""
+        n = self.max_particles
+        
+        # 预分配大数组
+        self.pos = np.zeros((n, 3), dtype=np.float64)
+        self.vel = np.zeros((n, 3), dtype=np.float64)
+        self.types = np.full(n, -1, dtype=np.int32)  # -1 = 失活
+        
+        # 只初始化活跃粒子
         box_size = self.box_size
         temp_k = self.config.temperature
         boltzmann_k = self.config.boltzmann_k
-        mass = self.mass
         
-        # 位置: 均匀随机分布
-        self.pos = np.random.rand(n, 3) * box_size
+        sigma = math.sqrt(boltzmann_k * temp_k / self.mass)
         
-        # 速度: 麦克斯韦-玻尔兹曼分布
-        sigma = math.sqrt(boltzmann_k * temp_k / mass)
-        self.vel = np.random.normal(0, sigma, (n, 3))
+        offset = 0
+        for substance in self.config.substances:
+            count = substance.initial_count
+            for _ in range(count):
+                if offset >= n:
+                    break
+                # 位置随机
+                self.pos[offset, 0] = np.random.random() * box_size
+                self.pos[offset, 1] = np.random.random() * box_size
+                self.pos[offset, 2] = np.random.random() * box_size
+                # 速度 Maxwell-Boltzmann
+                self.vel[offset, 0] = np.random.normal(0, sigma)
+                self.vel[offset, 1] = np.random.normal(0, sigma)
+                self.vel[offset, 2] = np.random.normal(0, sigma)
+                # 类型
+                self.types[offset] = substance.type_id
+                offset += 1
         
-        # 去除整体漂移
-        v_mean = np.mean(self.vel, axis=0)
-        self.vel -= v_mean
-        
-        # 类型: 根据初始浓度设置
-        # 前 initial_count_a 个为 A (0)，后 initial_count_b 个为 B (1)
-        self.types = np.zeros(n, dtype=np.int32)
-        if self.initial_count_b > 0:
-            self.types[self.initial_count_a:] = 1  # B 粒子
+        # 去除平均漂移
+        if offset > 0:
+            v_mean = np.mean(self.vel[:offset], axis=0)
+            self.vel[:offset] -= v_mean
+    
+    def get_active_count(self) -> int:
+        """获取活跃粒子数"""
+        return int(np.sum(self.types >= 0))
     
     def update(self):
         """执行一步物理更新"""
         dt = self.dt
         box_size = self.box_size
+        n_active = self.get_active_count()
         
-        # 获取可逆反应参数
-        rev_config = self.config.reversible_reaction
-        ea_forward = rev_config.ea_forward
-        ea_reverse = rev_config.ea_reverse
+        if n_active == 0:
+            self.sim_time += dt
+            return
         
-        # 恒温器 (Thermostat)
-        v_sq = np.sum(self.vel ** 2)
-        current_temp = (self.mass * v_sq) / (3 * self.n * self.config.boltzmann_k)
+        # 恒温器
+        active_mask = self.types >= 0
+        v_sq = np.sum(self.vel[active_mask] ** 2)
+        current_temp = (self.mass * v_sq) / (3 * n_active * self.config.boltzmann_k)
         
         if current_temp > 0:
             scale = math.sqrt(self.config.temperature / current_temp)
-            # 调试日志：每 60 帧打印一次温度状态
-            if self.sim_time % 1.0 < dt:
-                print(f"[Physics] Target Temp: {self.config.temperature:.1f}, Current Temp: {current_temp:.1f}, Scale: {scale:.4f}")
-            
             scale = np.clip(scale, 0.99, 1.01)
-            self.vel *= scale
-
-        # 1. 更新位置
+            self.vel[active_mask] *= scale
+        
+        # 1. 更新位置（只更新活跃粒子）
         update_positions_numba(self.pos, self.vel, dt, box_size)
         
-        # 2. 构建 Cell List
+        # 2. 构建 Cell List（跳过失活粒子）
         head, next_particle = build_cell_list(
-            self.pos, self.n, box_size, self.cell_divs
+            self.pos, self.max_particles, box_size, self.cell_divs, self.types
         )
         
-        # 3. 碰撞处理与可逆反应
-        resolve_collisions(
-            self.pos, self.vel, self.types,
-            head, next_particle,
-            self.cell_divs, box_size, dt,
-            ea_forward,                     # 正反应活化能
-            ea_reverse,                     # 逆反应活化能
-            self.config.temperature,        # 温度 (K)
-            self.config.boltzmann_k,        # 玻尔兹曼常数
-            rev_config.radius_a,            # A 粒子半径
-            rev_config.radius_b             # B 粒子半径
-        )
+        # 3. 二级反应（碰撞触发）
+        if len(self.reactions_2body) > 0:
+            resolve_collisions_generic(
+                self.pos, self.vel, self.types,
+                head, next_particle,
+                self.cell_divs, box_size, dt,
+                self.reactions_2body,
+                self.radii,
+                self.config.temperature,
+                self.config.boltzmann_k,
+                self.mass
+            )
+        
+        # 4. 一级反应（自发分解）
+        if len(self.reactions_1body) > 0:
+            process_1body_reactions(
+                self.types, self.pos, self.vel,
+                self.reactions_1body,
+                self.config.temperature,
+                self.config.boltzmann_k,
+                dt, box_size, self.mass
+            )
         
         self.sim_time += dt
-        
-        # 半衰期检测
-        self._check_half_life()
-    
-    def _check_half_life(self):
-        """检测并记录半衰期"""
-        current_a = self.get_reactant_count()
-        current_b = self.get_product_count()
-        
-        # 正反应半衰期: A 减少到初始值的一半
-        if not self.half_life_forward_detected and self.initial_a_count > 0:
-            if current_a <= self.initial_a_count / 2:
-                self.config.half_life_forward = self.sim_time
-                self.half_life_forward_detected = True
-                print(f"[PhysicsEngine] Forward half-life detected: {self.sim_time:.2f}s")
-        
-        # 逆反应半衰期: B 减少到初始值的一半（仅当初始有 B 时有意义）
-        if not self.half_life_reverse_detected and self.initial_b_count > 0:
-            if current_b <= self.initial_b_count / 2:
-                self.config.half_life_reverse = self.sim_time
-                self.half_life_reverse_detected = True
-                print(f"[PhysicsEngine] Reverse half-life detected: {self.sim_time:.2f}s")
-    
-    def get_product_count(self) -> int:
-        """获取产物 B 数量"""
-        return int(np.sum(self.types == 1))
-    
-    def get_reactant_count(self) -> int:
-        """获取反应物 A 数量"""
-        return int(np.sum(self.types == 0))
     
     def get_visible_particles(self) -> List[Dict[str, Any]]:
         """获取可见粒子（切片内）用于前端渲染，包含能量信息"""
         z_mid = self.box_size / 2
         z_half_thick = self.config.slice_thickness / 2
         
-        # 筛选可见粒子（排除已消耗的粒子 type=2，虽然可逆反应不再使用）
+        # 筛选可见粒子（排除失活粒子 type=-1）
         z_vals = self.pos[:, 2]
-        visible_mask = (np.abs(z_vals - z_mid) <= z_half_thick) & (self.types != 2)
+        visible_mask = (np.abs(z_vals - z_mid) <= z_half_thick) & (self.types >= 0)
         
         visible_pos = self.pos[visible_mask]
         visible_types = self.types[visible_mask]
@@ -216,27 +207,36 @@ class PhysicsEngineAdapter:
         return particles
     
     def get_state(self) -> Dict[str, Any]:
-        """获取完整状态（不再包含理论曲线）"""
-        product_count = self.get_product_count()
-        reactant_count = self.get_reactant_count()
+        """获取完整状态"""
+        # 统计各物质数量
+        substance_counts = {}
+        for substance in self.config.substances:
+            count = int(np.sum(self.types == substance.type_id))
+            substance_counts[substance.id] = count
         
         return {
             "time": self.sim_time,
-            "productCount": product_count,
-            "reactantCount": reactant_count,
-            "halfLifeForward": self.config.half_life_forward,
-            "halfLifeReverse": self.config.half_life_reverse,
+            "substanceCounts": substance_counts,
+            "activeCount": self.get_active_count(),
             "particles": self.get_visible_particles(),
         }
     
     def reset(self):
         """重置模拟"""
+        # 重新构建反应数组
+        self.reactions_2body = self.config.build_reactions_2body()
+        self.reactions_1body = self.config.build_reactions_1body()
+        self.radii = self.config.build_radii_array()
+        
+        # 重新计算 Cell 划分
+        max_radius = max(self.radii) if len(self.radii) > 0 and max(self.radii) > 0 else 0.15
+        self.cell_divs = int(self.box_size // (max_radius * 3.0))
+        if self.cell_divs < 1:
+            self.cell_divs = 1
+        
+        # 重新初始化粒子
         self._init_particles()
         self.sim_time = 0.0
-        self.half_life_forward_detected = False
-        self.half_life_reverse_detected = False
-        self.config.half_life_forward = None
-        self.config.half_life_reverse = None
 
 
 # ============================================================================
@@ -400,12 +400,17 @@ def handle_update_config(data: Dict[str, Any]):
     
     runtime_config.update_from_dict(data)
     
-    # 如果物理引擎存在，更新其配置引用
-    if physics_engine is not None:
-        physics_engine.config = runtime_config
+    # 如果模拟未运行且更新涉及物质/反应配置，重建物理引擎
+    should_preview = 'substances' in data or 'reactions' in data
     
+    if not simulation_running and should_preview:
+        with simulation_lock:
+            physics_engine = PhysicsEngineAdapter(runtime_config)
+            state = physics_engine.get_state()
+            emit('state_update', state, broadcast=True)
+            
     emit('config', runtime_config.to_dict(), broadcast=True)
-    print(f'[Server] Config updated: {data}')
+    print(f'[Server] Config updated: {list(data.keys())}')
 
 
 # ============================================================================

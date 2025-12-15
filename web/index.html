@@ -23,75 +23,94 @@
             <!-- 上半部分: 属性面板 + 控制面板 -->
             <div class="grid grid-cols-top-row gap-md">
                 <!-- 属性面板（模拟开始后锁定）-->
-                <div class="bg-surface border border-border rounded-panel p-md flex flex-col" id="properties-panel">
+                <div class="bg-surface border border-border rounded-panel p-md flex flex-col overflow-y-auto max-h-[400px]"
+                    id="properties-panel">
                     <h3 class="text-lg font-medium text-text-primary mb-md pb-sm border-b border-border">
                         属性 <span class="text-xs text-text-muted ml-xs lock-indicator" id="lock-indicator"></span>
                     </h3>
 
-                    <div class="flex flex-col gap-sm">
-                        <!-- 粒子半径 -->
-                        <div class="grid grid-cols-slider-pair gap-md">
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>A 半径</span>
-                                    <span class="font-medium text-text-primary tabular-nums"
-                                        id="radius-a-value">0.30</span>
-                                </label>
-                                <input type="range" class="property-slider" id="radius-a-slider" min="0.1" max="0.5"
-                                    step="0.01" value="0.30">
+                    <!-- 反应配置区 -->
+                    <div class="mb-md">
+                        <h4 class="text-sm font-medium text-text-secondary mb-sm">反应配置</h4>
+                        <div class="flex flex-col gap-sm" id="reactions-container">
+                            <!-- 反应 1 -->
+                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
+                                <div class="flex gap-sm items-center">
+                                    <span class="text-xs text-text-muted w-8">R1:</span>
+                                    <input type="text"
+                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
+                                        id="reaction-1-eq" placeholder="如: 2A=B" value="2A=B">
+                                </div>
+                                <div class="grid grid-cols-2 gap-sm">
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea正:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-1-ea-forward" value="30" min="1" max="100">
+                                    </div>
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea逆:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-1-ea-reverse" value="30" min="1" max="100">
+                                    </div>
+                                </div>
                             </div>
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>B 半径</span>
-                                    <span class="font-medium text-text-primary tabular-nums"
-                                        id="radius-b-value">0.30</span>
-                                </label>
-                                <input type="range" class="property-slider" id="radius-b-slider" min="0.1" max="0.5"
-                                    step="0.01" value="0.30">
+                            <!-- 反应 2 -->
+                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
+                                <div class="flex gap-sm items-center">
+                                    <span class="text-xs text-text-muted w-8">R2:</span>
+                                    <input type="text"
+                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
+                                        id="reaction-2-eq" placeholder="可选">
+                                </div>
+                                <div class="grid grid-cols-2 gap-sm">
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea正:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-2-ea-forward" value="30" min="1" max="100">
+                                    </div>
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea逆:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-2-ea-reverse" value="30" min="1" max="100">
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- 反应 3 -->
+                            <div class="flex flex-col gap-xs p-sm bg-bg rounded-lg border border-border/50">
+                                <div class="flex gap-sm items-center">
+                                    <span class="text-xs text-text-muted w-8">R3:</span>
+                                    <input type="text"
+                                        class="property-input flex-1 bg-surface border border-border rounded px-sm py-xs text-sm"
+                                        id="reaction-3-eq" placeholder="可选">
+                                </div>
+                                <div class="grid grid-cols-2 gap-sm">
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea正:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-3-ea-forward" value="30" min="1" max="100">
+                                    </div>
+                                    <div class="flex items-center gap-xs">
+                                        <span class="text-xs text-text-muted">Ea逆:</span>
+                                        <input type="number"
+                                            class="property-input w-16 bg-surface border border-border rounded px-sm py-xs text-sm text-center"
+                                            id="reaction-3-ea-reverse" value="30" min="1" max="100">
+                                    </div>
+                                </div>
                             </div>
                         </div>
+                    </div>
 
-                        <!-- 初始浓度 -->
-                        <div class="grid grid-cols-slider-pair gap-md">
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>A 初始数量</span>
-                                    <span class="font-medium text-text-primary tabular-nums"
-                                        id="count-a-value">10000</span>
-                                </label>
-                                <input type="range" class="property-slider" id="count-a-slider" min="0" max="10000"
-                                    step="100" value="10000">
-                            </div>
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>B 初始数量</span>
-                                    <span class="font-medium text-text-primary tabular-nums" id="count-b-value">0</span>
-                                </label>
-                                <input type="range" class="property-slider" id="count-b-slider" min="0" max="10000"
-                                    step="100" value="0">
-                            </div>
-                        </div>
-
-                        <!-- 活化能 -->
-                        <div class="grid grid-cols-slider-pair gap-md">
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>正反应 Ea</span>
-                                    <span class="font-medium text-text-primary tabular-nums"
-                                        id="ea-forward-value">30</span>
-                                </label>
-                                <input type="range" class="property-slider" id="ea-forward-slider" min="1" max="100"
-                                    step="1" value="30">
-                            </div>
-                            <div class="flex flex-col gap-xs">
-                                <label class="flex justify-between items-center text-sm text-text-secondary">
-                                    <span>逆反应 Ea</span>
-                                    <span class="font-medium text-text-primary tabular-nums"
-                                        id="ea-reverse-value">30</span>
-                                </label>
-                                <input type="range" class="property-slider" id="ea-reverse-slider" min="1" max="100"
-                                    step="1" value="30">
-                            </div>
+                    <!-- 物质配置区（动态生成）-->
+                    <div>
+                        <h4 class="text-sm font-medium text-text-secondary mb-sm">物质配置 <span
+                                class="text-xs text-text-muted">(从反应解析)</span></h4>
+                        <div class="flex flex-col gap-sm" id="substances-container">
+                            <!-- 动态生成 -->
                         </div>
                     </div>
                 </div>
@@ -158,19 +177,11 @@
                 <div class="flex-1 min-h-0 relative canvas-container">
                     <canvas id="concentration-chart"></canvas>
                 </div>
-                <div class="flex gap-md mt-sm text-xs">
-                    <div class="flex items-center gap-xs">
-                        <span class="legend-dot reactant"></span>
-                        <span>反应物 [A]</span>
-                    </div>
-                    <div class="flex items-center gap-xs">
-                        <span class="legend-dot product"></span>
-                        <span>产物 [B]</span>
-                    </div>
+                <div class="flex flex-wrap gap-md mt-sm text-xs" id="concentration-legend">
+                    <!-- 动态生成 -->
                 </div>
-                <div class="flex justify-between text-xs text-text-muted mt-sm">
-                    <span id="concentration-a">[A] = --</span>
-                    <span id="concentration-p">[B] = --</span>
+                <div class="flex flex-wrap gap-md text-xs text-text-muted mt-sm" id="concentration-values">
+                    <!-- 动态生成 -->
                 </div>
             </div>
         </div>

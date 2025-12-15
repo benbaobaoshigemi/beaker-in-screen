@@ -11,7 +11,7 @@ class WebSocketManager {
         this.socket = null;
         this.connected = false;
         this.reconnectAttempts = 0;
-        this.maxReconnectAttempts = 5;
+        this.maxReconnectAttempts = Infinity; // 无限重试，避免 Server 重启时间过长导致断连
         this.theoryCurveGenerated = false;  // 理论曲线是否已生成
     }
 
@@ -67,26 +67,16 @@ class WebSocketManager {
 
         // 接收配置
         this.socket.on('config', (data) => {
-            console.log('[WebSocket] Config received:', data);
+            console.log('[WebSocket] Config received');
 
-            // 更新可逆反应配置
-            const revConfig = data.reversibleReaction || {};
+            // 新格式：substances 和 reactions
             stateManager.update('config', {
                 temperature: data.temperature,
-                // 可逆反应参数
-                radiusA: revConfig.radiusA || 0.3,
-                radiusB: revConfig.radiusB || 0.3,
-                initialCountA: revConfig.initialCountA || 10000,
-                initialCountB: revConfig.initialCountB || 0,
-                eaForward: revConfig.eaForward || 30,
-                eaReverse: revConfig.eaReverse || 30,
-                // 锁定状态
+                substances: data.substances || [],
+                reactions: data.reactions || [],
                 propertiesLocked: data.propertiesLocked || false,
-                // 半衰期
-                halfLifeForward: data.halfLifeForward,
-                halfLifeReverse: data.halfLifeReverse,
-                // 兼容旧版
-                numParticles: data.numParticles || 10000,
+                boxSize: data.boxSize || 40,
+                maxParticles: data.maxParticles || 20000,
             });
 
             // 更新 UI 锁定状态

@@ -28,6 +28,13 @@ export class SimulationView {
         // 粒子数据
         this.particles = [];
 
+        // 缓存
+        this.glowTextureA = null;
+        this.glowTextureB = null;
+        this.lastRadiusA = 0;
+        this.lastRadiusB = 0;
+        this.cachedThreshold = null;
+
         this.init();
     }
 
@@ -138,41 +145,137 @@ export class SimulationView {
 
         const particles = this.particles;
         const config = stateManager.getState().config;
-
-        // 动态获取粒子半径（A 和 B 分别）
-        const physicsRadiusA = config.radiusA || 0.3;
-        const physicsRadiusB = config.radiusB || 0.3;
+        const substances = config.substances || [];
         const boxSize = CONFIG.SIMULATION.BOX_SIZE;
-        // 取 width 和 height 中较小的作为基准，保持圆形
         const screenScale = Math.min(width, height);
-        const radiusA = (physicsRadiusA / boxSize) * screenScale;
-        const radiusB = (physicsRadiusB / boxSize) * screenScale;
 
         const scaleX = width;
         const scaleY = height;
 
-        // 渲染每个粒子 - 实心圆，无辉光，纯色
-        ctx.shadowBlur = 0; // 确保无阴影
+        // 按物质类型分组绘制
+        for (const substance of substances) {
+            const typeId = substance.typeId;
+            const colorHue = substance.colorHue || 0;
+            const physicsRadius = substance.radius || 0.15;
+            const radius = (physicsRadius / boxSize) * screenScale;
+            const color = `hsl(${colorHue}, 70%, 50%)`;
+
+            // 确保有辉光纹理缓存
+            if (!this.glowTextures) this.glowTextures = {};
+            const cacheKey = `${typeId}_${colorHue}_${radius.toFixed(2)}`;
+            if (!this.glowTextures[cacheKey]) {
+                this.glowTextures[cacheKey] = this.createGlowTexture(radius, color);
+            }
+
+            // 绘制该类型的所有粒子
+            ctx.beginPath();
+            ctx.fillStyle = color;
+            for (let i = 0; i < particles.length; i++) {
+                if (particles[i].type === typeId) {
+                    const p = particles[i];
+                    const x = p.x * scaleX;
+                    const y = p.y * scaleY;
+                    ctx.moveTo(x + radius, y);
+                    ctx.arc(x, y, radius, 0, Math.PI * 2);
+                }
+            }
+            ctx.fill();
+        };
+
+        // 计算 Top 20% 能量阈值
+        let threshold = 1.0;
+        if (particles.length > 0) {
+            // 每 10 帧更新一次阈值，避免每帧排序
+            if (!this.cachedThreshold || this.frameCount % 10 === 0) {
+                const sampleSize = Math.min(particles.length, 200);
+                const samples = new Float32Array(sampleSize);
+                const step = Math.max(1, Math.floor(particles.length / sampleSize));
+                for (let i = 0; i < sampleSize; i++) {
+                    const p = particles[Math.min(i * step, particles.length - 1)];
+                    samples[i] = p.energy !== undefined ? p.energy : 0.5;
+                }
+                samples.sort();
+                threshold = samples[Math.floor(sampleSize * 0.8)];
+                this.cachedThreshold = threshold;
+            } else {
+                threshold = this.cachedThreshold;
+            }
+        }
+
+        // 第二遍：绘制高能粒子辉光（使用预渲染纹理）
+        ctx.globalCompositeOperation = 'lighter';
 
         for (let i = 0; i < particles.length; i++) {
             const p = particles[i];
             const energy = p.energy !== undefined ? p.energy : 0.5;
-            const color = CONFIG.getParticleColor(p.type, energy);
 
-            const x = p.x * scaleX;
-            const y = p.y * scaleY;
+            if (energy >= threshold) {
+                const x = p.x * scaleX;
+                const y = p.y * scaleY;
 
-            // 根据粒子类型选择半径
-            const radius = p.type === 0 ? radiusA : radiusB;
+                // 从缓存获取辉光纹理
+                const substance = substances.find(s => s.typeId === p.type);
+                if (!substance) continue;
 
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(x, y, radius, 0, Math.PI * 2);
-            ctx.fill();
+                const physicsRadius = substance.radius || 0.15;
+                const radius = (physicsRadius / boxSize) * screenScale;
+                const colorHue = substance.colorHue || 0;
+                const cacheKey = `${p.type}_${colorHue}_${radius.toFixed(2)}`;
+                const texture = this.glowTextures?.[cacheKey];
+
+                if (texture) {
+                    const offset = texture.width / 2;
+                    ctx.drawImage(texture, x - offset, y - offset, texture.width, texture.height);
+                }
+            }
         }
 
-        // 重置阴影
-        ctx.shadowBlur = 0;
+        ctx.globalCompositeOperation = 'source-over';
+    }
+
+    /**
+     * 创建辉光纹理 (电影级效果，模拟 Bloom)
+     * 使用径向渐变：白核 -> 高亮色 -> 衰减色 -> 透明
+     */
+    createGlowTexture(radius, colorStr) {
+        // 辉光不得溢出超过半径的一倍 -> 总辉光半径 = 2 * 粒子半径
+        const glowSize = radius * 2;
+        const size = Math.ceil(glowSize * 2);
+
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        const centerX = size / 2;
+        const centerY = size / 2;
+
+        // 创建径向渐变
+        const gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, glowSize);
+
+        // 简单处理颜色：提亮
+        let lightColor = colorStr;
+        try {
+            // 简单的字符串替换，将亮度调高
+            // 假设格式为 hsl(h, 100%, 50%) -> hsl(h, 100%, 80%)
+            lightColor = colorStr.replace(/, \d+%\)/, ', 80%)');
+        } catch (e) {
+            console.warn('Color replace failed', e);
+        }
+
+        // 核心：纯白 (模拟高温/高能) - 非常小，仅占 5%
+        gradient.addColorStop(0.0, 'rgba(255, 255, 255, 1)');
+        // 核心边缘：高亮色 - 占 20%
+        gradient.addColorStop(0.2, lightColor);
+        // 主体光晕：原色 - 占 50%
+        gradient.addColorStop(0.5, colorStr);
+        // 边缘衰减：透明
+        gradient.addColorStop(1.0, 'rgba(0, 0, 0, 0)');
+
+        ctx.fillStyle = gradient;
+        // 填充整个画布
+        ctx.fillRect(0, 0, size, size);
+
+        return canvas;
     }
 }
-

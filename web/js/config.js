@@ -86,19 +86,9 @@ export const CONFIG = {
         const config = this.getParticleColorConfig();
         const particleConfig = type === 0 ? config.A : config.B;
 
-        // 亮度范围: 30% ~ 100%
-        const minL = 30;
-        const maxL = 100;
-
-        // 限制 energy 在 [0, 1]
-        const safeEnergy = Math.max(0, Math.min(1, energy || 0));
-
-        // 幂函数映射 (gamma = 0.6)
-        // 让中低能量粒子变亮，增加亮粒子占比
-        const gamma = 0.6;
-        const mappedEnergy = Math.pow(safeEnergy, gamma);
-
-        const lightness = minL + mappedEnergy * (maxL - minL);
+        // 移除亮度随能量变化逻辑，保持同色
+        // 亮度固定为基本亮度 (通常 50%)
+        const lightness = 50;
 
         return `hsl(${particleConfig.hue}, 100%, ${lightness}%)`;
     },

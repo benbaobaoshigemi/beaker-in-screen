@@ -1,226 +1,346 @@
 # -*- coding: utf-8 -*-
 """
 运行时配置模块
-支持热更新参数，预埋多组分和竞争反应接口
+支持一级/二级反应的通用配置
 """
 
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
+import re
+import numpy as np
 
+
+# ============================================================================
+# 物质配置
+# ============================================================================
 
 @dataclass
-class ReversibleReactionConfig:
+class SubstanceConfig:
     """
-    可逆反应配置
+    物质配置
     
-    反应方程: 2A ⇌ 2B
-    - 正反应: 2A → 2B (活化能 ea_forward)
-    - 逆反应: 2B → 2A (活化能 ea_reverse)
-    
-    设计原则：
-    - A 和 B 使用完全对称的碰撞逻辑
-    - 便于后期扩展为连续反应 A → B → C
+    属性:
+        id: 物质标识符 ("A", "B", "C", ...)
+        type_id: 内部类型ID (0, 1, 2, ...)
+        color_hue: 色相 (0-359)
+        radius: 粒子半径
+        initial_count: 初始数量
     """
-    # A 粒子属性
-    radius_a: float = 0.3
-    initial_count_a: int = 10000  # 初始全部为 A
-    
-    # B 粒子属性
-    radius_b: float = 0.3
-    initial_count_b: int = 0
-    
-    # 正反应活化能 (2A → 2B)
-    ea_forward: float = 30.0
-    
-    # 逆反应活化能 (2B → 2A)
-    ea_reverse: float = 30.0
-    
-    def get_equation_string(self) -> str:
-        """获取反应方程式字符串"""
-        return "2A ⇌ 2B"
-    
-    def get_total_particles(self) -> int:
-        """获取总粒子数"""
-        return self.initial_count_a + self.initial_count_b
+    id: str
+    type_id: int
+    color_hue: int = 0
+    radius: float = 0.15
+    initial_count: int = 0
     
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "radiusA": self.radius_a,
-            "radiusB": self.radius_b,
-            "initialCountA": self.initial_count_a,
-            "initialCountB": self.initial_count_b,
-            "eaForward": self.ea_forward,
-            "eaReverse": self.ea_reverse,
-            "equation": self.get_equation_string(),
+            "id": self.id,
+            "typeId": self.type_id,
+            "colorHue": self.color_hue,
+            "radius": self.radius,
+            "initialCount": self.initial_count,
         }
 
 
-# 保留旧的 ReactionConfig 以保持兼容性（后续可删除）
+# ============================================================================
+# 反应配置
+# ============================================================================
+
 @dataclass
 class ReactionConfig:
-    """旧版反应配置（保留兼容性）"""
-    reactants: List[str] = field(default_factory=lambda: ["A"])
-    reactant_coeffs: List[int] = field(default_factory=lambda: [2])
-    products: List[str] = field(default_factory=lambda: ["B"])
-    product_coeffs: List[int] = field(default_factory=lambda: [1])
-    activation_energy: float = 0.5
+    """
+    通用反应配置
     
-    def get_equation_string(self) -> str:
-        reactant_str = " + ".join(
-            f"{c if c > 1 else ''}{r}"
-            for r, c in zip(self.reactants, self.reactant_coeffs)
-        )
-        product_str = " + ".join(
-            f"{c if c > 1 else ''}{p}"
-            for p, c in zip(self.products, self.product_coeffs)
-        )
-        return f"{reactant_str} → {product_str}"
+    支持类型:
+        - 二级反应（碰撞触发）: 2A→B, A+B→C, 2A→2B, A+B→C+D
+        - 一级反应（自发分解）: B→2A, C→A+B
     
-    def get_total_reactant_consumed(self) -> int:
-        return sum(self.reactant_coeffs)
+    约束:
+        - 反应物: 1-2 个粒子
+        - 产物: 1-2 个粒子
+    """
+    equation: str = ""
+    reactant_types: List[int] = field(default_factory=list)  # 展开后的类型列表
+    product_types: List[int] = field(default_factory=list)
+    ea_forward: float = 30.0
+    ea_reverse: float = 30.0
+    frequency_factor: float = 1.0  # 一级反应的 A 因子（模拟单位）
     
-    def get_total_product_created(self) -> int:
-        return sum(self.product_coeffs)
+    def get_order(self) -> int:
+        """获取反应级数"""
+        return len(self.reactant_types)
     
-    def to_dict(self) -> Dict[str, Any]:
+    def is_first_order(self) -> bool:
+        """是否为一级反应（自发分解）"""
+        return len(self.reactant_types) == 1
+    
+    def is_second_order(self) -> bool:
+        """是否为二级反应（碰撞触发）"""
+        return len(self.reactant_types) == 2
+    
+    def is_valid(self) -> bool:
+        """验证反应是否合法"""
+        if not (1 <= len(self.reactant_types) <= 2):
+            return False
+        if not (1 <= len(self.product_types) <= 2):
+            return False
+        if self.ea_forward < 0 or self.ea_reverse < 0:
+            return False
+        return True
+    
+    def get_display_equation(self, substances: List[SubstanceConfig]) -> str:
+        """生成显示用的美化反应式"""
+        id_map = {s.type_id: s.id for s in substances}
+        
+        def format_side(type_ids: List[int]) -> str:
+            counts = {}
+            for t in type_ids:
+                counts[t] = counts.get(t, 0) + 1
+            terms = []
+            for t, c in counts.items():
+                name = id_map.get(t, "?")
+                if c == 1:
+                    terms.append(name)
+                else:
+                    terms.append(f"{c}{name}")
+            return " + ".join(terms)
+        
+        left = format_side(self.reactant_types)
+        right = format_side(self.product_types)
+        return f"{left} ⇌ {right}"
+    
+    def to_dict(self, substances: List[SubstanceConfig] = None) -> Dict[str, Any]:
         return {
-            "reactants": self.reactants,
-            "reactantCoeffs": self.reactant_coeffs,
-            "products": self.products,
-            "productCoeffs": self.product_coeffs,
-            "activationEnergy": self.activation_energy,
-            "equation": self.get_equation_string(),
+            "equation": self.equation,
+            "displayEquation": self.get_display_equation(substances) if substances else self.equation,
+            "reactantTypes": self.reactant_types,
+            "productTypes": self.product_types,
+            "eaForward": self.ea_forward,
+            "eaReverse": self.ea_reverse,
+            "frequencyFactor": self.frequency_factor,
+            "order": self.get_order(),
+            "isValid": self.is_valid(),
         }
 
+
+def parse_reaction_equation(equation: str, substances: List[SubstanceConfig]) -> Optional[ReactionConfig]:
+    """解析反应式字符串，如 "2A=B" 或 "A+B=C" """
+    id_to_type = {s.id.upper(): s.type_id for s in substances}
+    eq = equation.replace(" ", "").upper()
+    
+    if "=" not in eq:
+        return None
+    parts = eq.split("=")
+    if len(parts) != 2:
+        return None
+    
+    left_str, right_str = parts
+    
+    def parse_side(side_str: str) -> Optional[List[int]]:
+        if not side_str:
+            return None
+        terms = side_str.split("+")
+        result = []
+        for term in terms:
+            if not term:
+                return None
+            match = re.match(r'^(\d*)([A-Z]+)$', term)
+            if not match:
+                return None
+            coeff_str, name = match.groups()
+            coeff = int(coeff_str) if coeff_str else 1
+            if name not in id_to_type:
+                return None
+            result.extend([id_to_type[name]] * coeff)
+        return result
+    
+    reactant_types = parse_side(left_str)
+    product_types = parse_side(right_str)
+    
+    if reactant_types is None or product_types is None:
+        return None
+    
+    config = ReactionConfig(
+        equation=equation,
+        reactant_types=reactant_types,
+        product_types=product_types,
+    )
+    return config if config.is_valid() else None
+
+
+# ============================================================================
+# 运行时配置
+# ============================================================================
 
 @dataclass
 class RuntimeConfig:
     """
-    运行时可配置参数
-    
-    设计原则：
-    - 属性参数（模拟开始后锁定）：半径、初始浓度、活化能
-    - 控制参数（运行时可调）：温度
-    - 支持序列化为字典用于前端通信
+    模拟运行时配置
     """
+    # 控制参数
+    temperature: float = 300.0
     
-    # ========== 控制参数（运行时可调）==========
-    temperature: float = 300.0       # 真实单位：开尔文 (200-500K)
+    # 物质配置
+    substances: List[SubstanceConfig] = field(default_factory=list)
     
-    # ========== 可逆反应配置（属性参数）==========
-    reversible_reaction: ReversibleReactionConfig = field(default_factory=ReversibleReactionConfig)
+    # 反应配置
+    reactions: List[ReactionConfig] = field(default_factory=list)
     
-    # ========== 属性锁定标志 ==========
+    # 属性锁定
     properties_locked: bool = False
     
-    # ========== 系统参数（不可调）==========
+    # 系统参数
     box_size: float = 40.0
     mass: float = 1.0
-    boltzmann_k: float = 0.1  # 模拟单位
+    boltzmann_k: float = 0.1
     dt: float = 0.002
     slice_thickness: float = 4.0
     
-    # ========== 半衰期统计（由模拟计算）==========
-    half_life_forward: Optional[float] = None  # 正反应半衰期
-    half_life_reverse: Optional[float] = None  # 逆反应半衰期
+    # 粒子管理
+    max_particles: int = 20000
     
-    # 保留旧字段以兼容（将被弃用）
-    activation_energy: float = 30.0
-    num_particles: int = 10000
-    particle_radius: float = 0.3
-    reaction: ReactionConfig = field(default_factory=ReactionConfig)
-    reactions: List[ReactionConfig] = field(default_factory=list)
-    components: List[str] = field(default_factory=lambda: ["A", "B"])
-    delta_h: float = 0.0
-    delta_s: float = 0.0
-    equilibrium_k: Optional[float] = None
+    # 最大限制
+    MAX_SUBSTANCES: int = 5
+    MAX_REACTIONS: int = 3
+    
+    def __post_init__(self):
+        if not self.substances:
+            self._init_default_substances()
+        if not self.reactions:
+            self._init_default_reactions()
+    
+    def _init_default_substances(self):
+        """默认物质：A(红), B(蓝)"""
+        self.substances = [
+            SubstanceConfig(id="A", type_id=0, color_hue=0,   radius=0.15, initial_count=10000),
+            SubstanceConfig(id="B", type_id=1, color_hue=210, radius=0.15, initial_count=0),
+        ]
+    
+    def _init_default_reactions(self):
+        """默认反应：2A ⇌ B"""
+        self.reactions = [
+            ReactionConfig(
+                equation="2A=B",
+                reactant_types=[0, 0],  # 2A
+                product_types=[1],       # B
+                ea_forward=30.0,
+                ea_reverse=30.0,
+            ),
+        ]
+    
+    def get_total_initial_particles(self) -> int:
+        """获取初始活跃粒子数"""
+        return sum(s.initial_count for s in self.substances)
+    
+    def get_substance_by_type(self, type_id: int) -> Optional[SubstanceConfig]:
+        for s in self.substances:
+            if s.type_id == type_id:
+                return s
+        return None
+    
+    def build_radii_array(self) -> np.ndarray:
+        """构建各类型粒子的半径数组"""
+        radii = np.zeros(self.MAX_SUBSTANCES, dtype=np.float64)
+        for s in self.substances:
+            if s.type_id < self.MAX_SUBSTANCES:
+                radii[s.type_id] = s.radius
+        return radii
+    
+    def build_reactions_2body(self) -> np.ndarray:
+        """
+        构建二级反应数组（碰撞触发）
+        
+        每行: [r0, r1, p0, p1, ea_forward, ea_reverse]
+        r0, r1: 反应物类型 (r1=-1 如果单反应物)
+        p0, p1: 产物类型 (-1 表示失活/无)
+        """
+        reactions_2 = []
+        for rxn in self.reactions:
+            if rxn.is_valid() and rxn.is_second_order():
+                r0, r1 = rxn.reactant_types[0], rxn.reactant_types[1]
+                p0 = rxn.product_types[0] if len(rxn.product_types) > 0 else -1
+                p1 = rxn.product_types[1] if len(rxn.product_types) > 1 else -1
+                reactions_2.append([r0, r1, p0, p1, rxn.ea_forward, rxn.ea_reverse])
+        
+        if not reactions_2:
+            return np.zeros((0, 6), dtype=np.float64)
+        return np.array(reactions_2, dtype=np.float64)
+    
+    def build_reactions_1body(self) -> np.ndarray:
+        """
+        构建一级反应数组（自发分解）
+        
+        每行: [reactant, p0, p1, ea, frequency_factor]
+        """
+        reactions_1 = []
+        for rxn in self.reactions:
+            if rxn.is_valid() and rxn.is_first_order():
+                r0 = rxn.reactant_types[0]
+                p0 = rxn.product_types[0] if len(rxn.product_types) > 0 else -1
+                p1 = rxn.product_types[1] if len(rxn.product_types) > 1 else -1
+                reactions_1.append([r0, p0, p1, rxn.ea_forward, rxn.frequency_factor])
+        
+        # 自动生成逆反应（一级分解的逆反应）
+        for rxn in self.reactions:
+            if rxn.is_valid() and rxn.is_second_order():
+                # 二级反应的逆反应可能是一级分解
+                # 如 2A→B 的逆反应 B→2A 是一级反应
+                if len(rxn.product_types) == 1:
+                    # 产物单一，逆反应是一级分解
+                    r0 = rxn.product_types[0]
+                    p0 = rxn.reactant_types[0]
+                    p1 = rxn.reactant_types[1] if len(rxn.reactant_types) > 1 else -1
+                    reactions_1.append([r0, p0, p1, rxn.ea_reverse, rxn.frequency_factor])
+        
+        if not reactions_1:
+            return np.zeros((0, 5), dtype=np.float64)
+        return np.array(reactions_1, dtype=np.float64)
     
     def to_dict(self) -> Dict[str, Any]:
-        """序列化为字典，用于前端通信"""
         return {
-            # 控制参数
             "temperature": self.temperature,
-            # 可逆反应配置
-            "reversibleReaction": self.reversible_reaction.to_dict(),
-            # 属性锁定状态
+            "substances": [s.to_dict() for s in self.substances],
+            "reactions": [r.to_dict(self.substances) for r in self.reactions],
             "propertiesLocked": self.properties_locked,
-            # 系统参数
             "boxSize": self.box_size,
             "mass": self.mass,
             "dt": self.dt,
             "sliceThickness": self.slice_thickness,
-            # 半衰期
-            "halfLifeForward": self.half_life_forward,
-            "halfLifeReverse": self.half_life_reverse,
-            # 兼容旧版
-            "numParticles": self.reversible_reaction.get_total_particles(),
-            "particleRadius": self.reversible_reaction.radius_a,
-            "activationEnergy": self.reversible_reaction.ea_forward,
-            "reaction": self.reaction.to_dict(),
-            "components": self.components,
+            "maxParticles": self.max_particles,
         }
     
     def update_from_dict(self, data: Dict[str, Any]) -> None:
-        """从字典更新配置"""
-        # 控制参数（始终可更新）
         if "temperature" in data:
             self.temperature = float(data["temperature"])
         
-        # 属性参数（仅在未锁定时可更新）
         if not self.properties_locked:
-            # 可逆反应参数
-            if "radiusA" in data:
-                self.reversible_reaction.radius_a = float(data["radiusA"])
-            if "radiusB" in data:
-                self.reversible_reaction.radius_b = float(data["radiusB"])
-            if "initialCountA" in data:
-                self.reversible_reaction.initial_count_a = int(data["initialCountA"])
-            if "initialCountB" in data:
-                self.reversible_reaction.initial_count_b = int(data["initialCountB"])
-            if "eaForward" in data:
-                self.reversible_reaction.ea_forward = float(data["eaForward"])
-            if "eaReverse" in data:
-                self.reversible_reaction.ea_reverse = float(data["eaReverse"])
+            if "substances" in data:
+                self.substances = []
+                for i, sd in enumerate(data["substances"][:self.MAX_SUBSTANCES]):
+                    self.substances.append(SubstanceConfig(
+                        id=sd.get("id", chr(65 + i)),
+                        type_id=i,
+                        color_hue=sd.get("colorHue", i * 60),
+                        radius=sd.get("radius", 0.15),
+                        initial_count=sd.get("initialCount", 0),
+                    ))
             
-            # 兼容旧版
-            if "particleRadius" in data:
-                self.reversible_reaction.radius_a = float(data["particleRadius"])
-                self.reversible_reaction.radius_b = float(data["particleRadius"])
-            if "activationEnergy" in data:
-                self.reversible_reaction.ea_forward = float(data["activationEnergy"])
+            if "reactions" in data:
+                self.reactions = []
+                for rd in data["reactions"][:self.MAX_REACTIONS]:
+                    if "equation" in rd:
+                        parsed = parse_reaction_equation(rd["equation"], self.substances)
+                        if parsed:
+                            parsed.ea_forward = rd.get("eaForward", 30.0)
+                            parsed.ea_reverse = rd.get("eaReverse", 30.0)
+                            parsed.frequency_factor = rd.get("frequencyFactor", 1.0)
+                            self.reactions.append(parsed)
         
-        # 切片厚度
         if "sliceThickness" in data:
             self.slice_thickness = float(data["sliceThickness"])
     
     def lock_properties(self) -> None:
-        """锁定属性参数"""
         self.properties_locked = True
     
     def unlock_properties(self) -> None:
-        """解锁属性参数"""
         self.properties_locked = False
-    
-    def clone(self) -> 'RuntimeConfig':
-        """创建配置副本"""
-        return RuntimeConfig(
-            temperature=self.temperature,
-            reversible_reaction=ReversibleReactionConfig(
-                radius_a=self.reversible_reaction.radius_a,
-                radius_b=self.reversible_reaction.radius_b,
-                initial_count_a=self.reversible_reaction.initial_count_a,
-                initial_count_b=self.reversible_reaction.initial_count_b,
-                ea_forward=self.reversible_reaction.ea_forward,
-                ea_reverse=self.reversible_reaction.ea_reverse,
-            ),
-            properties_locked=self.properties_locked,
-            box_size=self.box_size,
-            mass=self.mass,
-            boltzmann_k=self.boltzmann_k,
-            dt=self.dt,
-            slice_thickness=self.slice_thickness,
-            half_life_forward=self.half_life_forward,
-            half_life_reverse=self.half_life_reverse,
-            components=self.components.copy(),
-        )
-

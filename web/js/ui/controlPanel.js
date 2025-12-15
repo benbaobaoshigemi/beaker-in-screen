@@ -1,66 +1,171 @@
 /**
  * 控制面板模块
- * 处理属性面板和控制面板的交互
+ * 处理反应配置和动态物质配置
  */
 
 import { wsManager } from '../websocket.js';
 import { stateManager } from '../state.js';
 
+// 默认物质色相（A-E）
+const DEFAULT_HUES = { A: 0, B: 210, C: 120, D: 60, E: 300 };
+
 export class ControlPanel {
     constructor() {
+        this.substances = new Map(); // id -> { radius, initialCount, colorHue }
         this.init();
     }
 
     init() {
-        this.setupPropertySliders();
+        this.setupReactionInputs();
         this.setupControlSliders();
         this.setupButtons();
-        this.subscribeToState();
+        this.parseReactionsAndBuildUI();
     }
 
     /**
-     * 设置属性滑条（模拟开始后锁定）
+     * 设置反应输入框
      */
-    setupPropertySliders() {
-        // A 半径
-        this.bindSlider('radius-a-slider', 'radius-a-value', (val) => {
-            wsManager.updateConfig({ radiusA: parseFloat(val) });
-        }, (val) => parseFloat(val).toFixed(2));
+    setupReactionInputs() {
+        for (let i = 1; i <= 3; i++) {
+            const eqInput = document.getElementById(`reaction-${i}-eq`);
+            const eaForwardInput = document.getElementById(`reaction-${i}-ea-forward`);
+            const eaReverseInput = document.getElementById(`reaction-${i}-ea-reverse`);
 
-        // B 半径
-        this.bindSlider('radius-b-slider', 'radius-b-value', (val) => {
-            wsManager.updateConfig({ radiusB: parseFloat(val) });
-        }, (val) => parseFloat(val).toFixed(2));
+            if (eqInput) {
+                eqInput.addEventListener('change', () => this.parseReactionsAndBuildUI());
+                eqInput.addEventListener('blur', () => this.parseReactionsAndBuildUI());
+            }
+            if (eaForwardInput) {
+                eaForwardInput.addEventListener('change', () => this.sendConfig());
+            }
+            if (eaReverseInput) {
+                eaReverseInput.addEventListener('change', () => this.sendConfig());
+            }
+        }
+    }
 
-        // A 初始数量
-        this.bindSlider('count-a-slider', 'count-a-value', (val) => {
-            wsManager.updateConfig({ initialCountA: parseInt(val) });
+    /**
+     * 解析反应式，提取物质，构建 UI
+     */
+    parseReactionsAndBuildUI() {
+        const substanceIds = new Set();
+
+        for (let i = 1; i <= 3; i++) {
+            const eqInput = document.getElementById(`reaction-${i}-eq`);
+            if (!eqInput) continue;
+
+            const eq = eqInput.value.trim().toUpperCase();
+            if (!eq) continue;
+
+            // 解析反应式中的物质
+            const matches = eq.match(/[A-E]/g);
+            if (matches) {
+                matches.forEach(id => substanceIds.add(id));
+            }
+        }
+
+        // 按字母顺序排序
+        const sortedIds = Array.from(substanceIds).sort();
+
+        // 更新 substances Map
+        const oldSubstances = new Map(this.substances);
+        this.substances.clear();
+
+        sortedIds.forEach((id, index) => {
+            if (oldSubstances.has(id)) {
+                this.substances.set(id, oldSubstances.get(id));
+            } else {
+                this.substances.set(id, {
+                    radius: 0.15,
+                    initialCount: index === 0 ? 10000 : 0, // 第一个物质默认 10000
+                    colorHue: DEFAULT_HUES[id] || 0
+                });
+            }
         });
 
-        // B 初始数量
-        this.bindSlider('count-b-slider', 'count-b-value', (val) => {
-            wsManager.updateConfig({ initialCountB: parseInt(val) });
+        this.renderSubstancesUI();
+        this.sendConfig();
+    }
+
+    /**
+     * 渲染物质配置 UI
+     */
+    renderSubstancesUI() {
+        const container = document.getElementById('substances-container');
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        this.substances.forEach((config, id) => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-sm p-sm bg-bg rounded-lg border border-border/50';
+            div.innerHTML = `
+                <span class="w-6 h-6 rounded-full" style="background: hsl(${config.colorHue}, 70%, 50%)"></span>
+                <span class="text-sm font-medium w-6">${id}</span>
+                <div class="flex-1 flex items-center gap-xs">
+                    <span class="text-xs text-text-muted">半径:</span>
+                    <input type="number" class="substance-input w-14 bg-surface border border-border rounded px-xs py-xs text-xs text-center"
+                           data-substance="${id}" data-field="radius" value="${config.radius}" step="0.01" min="0.05" max="0.5">
+                </div>
+                <div class="flex-1 flex items-center gap-xs">
+                    <span class="text-xs text-text-muted">数量:</span>
+                    <input type="number" class="substance-input w-16 bg-surface border border-border rounded px-xs py-xs text-xs text-center"
+                           data-substance="${id}" data-field="initialCount" value="${config.initialCount}" step="100" min="0" max="20000">
+                </div>
+            `;
+            container.appendChild(div);
         });
 
-        // 正反应活化能
-        this.bindSlider('ea-forward-slider', 'ea-forward-value', (val) => {
-            wsManager.updateConfig({ eaForward: parseFloat(val) });
+        // 绑定事件
+        container.querySelectorAll('.substance-input').forEach(input => {
+            input.addEventListener('change', (e) => {
+                const id = e.target.dataset.substance;
+                const field = e.target.dataset.field;
+                const value = parseFloat(e.target.value);
+                if (this.substances.has(id)) {
+                    this.substances.get(id)[field] = value;
+                    this.sendConfig();
+                }
+            });
         });
 
-        // 逆反应活化能
-        this.bindSlider('ea-reverse-slider', 'ea-reverse-value', (val) => {
-            wsManager.updateConfig({ eaReverse: parseFloat(val) });
+        // 更新图例
+        this.updateLegend();
+    }
+
+    /**
+     * 更新浓度图图例
+     */
+    updateLegend() {
+        const legendContainer = document.getElementById('concentration-legend');
+        if (!legendContainer) return;
+
+        legendContainer.innerHTML = '';
+        this.substances.forEach((config, id) => {
+            const div = document.createElement('div');
+            div.className = 'flex items-center gap-xs';
+            div.innerHTML = `
+                <span class="w-2 h-2 rounded-full" style="background: hsl(${config.colorHue}, 70%, 50%)"></span>
+                <span>[${id}]</span>
+            `;
+            legendContainer.appendChild(div);
         });
     }
 
     /**
-     * 设置控制滑条（运行时可调）
+     * 设置控制滑条（温度）
      */
     setupControlSliders() {
-        // 温度
-        this.bindSlider('temp-slider', 'temp-value', (val) => {
-            wsManager.updateConfig({ temperature: parseFloat(val) });
-        });
+        const tempSlider = document.getElementById('temp-slider');
+        const tempValue = document.getElementById('temp-value');
+
+        if (tempSlider) {
+            tempSlider.addEventListener('input', (e) => {
+                const value = e.target.value;
+                if (tempValue) tempValue.textContent = value;
+                wsManager.updateConfig({ temperature: parseFloat(value) });
+            });
+        }
     }
 
     /**
@@ -73,71 +178,66 @@ export class ControlPanel {
 
         if (startBtn) {
             startBtn.addEventListener('click', () => {
+                this.sendConfig();
                 wsManager.start();
-                // 标记模拟已启动
                 stateManager.update('simulation', { started: true });
             });
         }
 
         if (pauseBtn) {
-            pauseBtn.addEventListener('click', () => {
-                wsManager.pause();
-            });
+            pauseBtn.addEventListener('click', () => wsManager.pause());
         }
 
         if (resetBtn) {
             resetBtn.addEventListener('click', () => {
                 wsManager.reset();
+                stateManager.update('simulation', { started: false });
             });
         }
     }
 
     /**
-     * 订阅状态更新
+     * 发送完整配置到后端
      */
-    subscribeToState() {
-        // 监听配置变化以同步 UI
-        stateManager.subscribe('config', (config) => {
-            this.updateSliderValue('radius-a-slider', 'radius-a-value', config.radiusA, (v) => v.toFixed(2));
-            this.updateSliderValue('radius-b-slider', 'radius-b-value', config.radiusB, (v) => v.toFixed(2));
-            this.updateSliderValue('count-a-slider', 'count-a-value', config.initialCountA);
-            this.updateSliderValue('count-b-slider', 'count-b-value', config.initialCountB);
-            this.updateSliderValue('ea-forward-slider', 'ea-forward-value', config.eaForward);
-            this.updateSliderValue('ea-reverse-slider', 'ea-reverse-value', config.eaReverse);
-            this.updateSliderValue('temp-slider', 'temp-value', config.temperature);
+    sendConfig() {
+        // 构建 substances 数组
+        const substances = [];
+        let typeId = 0;
+        this.substances.forEach((config, id) => {
+            substances.push({
+                id: id,
+                typeId: typeId++,
+                colorHue: config.colorHue,
+                radius: config.radius,
+                initialCount: Math.round(config.initialCount)
+            });
         });
-    }
 
-    /**
-     * 绑定滑条事件
-     */
-    bindSlider(sliderId, valueId, onChange, formatter = (v) => v) {
-        const slider = document.getElementById(sliderId);
-        const valueDisplay = document.getElementById(valueId);
+        // 构建 reactions 数组
+        const reactions = [];
+        for (let i = 1; i <= 3; i++) {
+            const eqInput = document.getElementById(`reaction-${i}-eq`);
+            const eaForwardInput = document.getElementById(`reaction-${i}-ea-forward`);
+            const eaReverseInput = document.getElementById(`reaction-${i}-ea-reverse`);
 
-        if (!slider) return;
+            if (!eqInput) continue;
+            const eq = eqInput.value.trim();
+            if (!eq) continue;
 
-        slider.addEventListener('input', (e) => {
-            const value = e.target.value;
-            if (valueDisplay) {
-                valueDisplay.textContent = formatter(value);
-            }
-            onChange(value);
+            reactions.push({
+                equation: eq,
+                eaForward: parseFloat(eaForwardInput?.value || 30),
+                eaReverse: parseFloat(eaReverseInput?.value || 30)
+            });
+        }
+
+        // 发送配置
+        wsManager.updateConfig({
+            substances: substances,
+            reactions: reactions
         });
-    }
 
-    /**
-     * 更新滑条显示值
-     */
-    updateSliderValue(sliderId, valueId, value, formatter = (v) => v) {
-        const slider = document.getElementById(sliderId);
-        const valueDisplay = document.getElementById(valueId);
-
-        if (slider && value !== undefined && value !== null) {
-            slider.value = value;
-        }
-        if (valueDisplay && value !== undefined && value !== null) {
-            valueDisplay.textContent = formatter(value);
-        }
+        // 更新本地状态
+        stateManager.update('config', { substances, reactions });
     }
 }
