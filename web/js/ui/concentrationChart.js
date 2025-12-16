@@ -183,7 +183,10 @@ export class ConcentrationChart {
         const clampEndIndex = (n) => {
             const maxEnd = this.data.length;
             if (maxEnd < 2) return maxEnd;
-            return Math.max(2, Math.min(maxEnd, n));
+            // 下限设为当前窗口大小，确保 startIndex = endIndex - windowPoints >= 0
+            // 这样用户可以完整拖动到最左边查看从时间0开始的数据
+            const minEnd = Math.min(this.windowPoints, maxEnd);
+            return Math.max(minEnd, Math.min(maxEnd, n));
         };
 
         const getPlotWidth = () => {

@@ -196,7 +196,10 @@ export class RateChart {
         const clampEndIndex = (n) => {
             const maxEnd = this.data.length;
             if (maxEnd < 2) return maxEnd;
-            return Math.max(2, Math.min(maxEnd, n));
+            // 下限设为当前窗口大小，确保 startIndex = endIndex - windowPoints >= 0
+            // 这样用户可以完整拖动到最左边查看从时间0开始的数据
+            const minEnd = Math.min(this.windowPoints, maxEnd);
+            return Math.max(minEnd, Math.min(maxEnd, n));
         };
 
         const getPlotWidth = () => {
@@ -575,15 +578,19 @@ export class RateChart {
                 ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
                 ctx.setLineDash([]);  // 实线
                 ctx.beginPath();
+                let firstPoint = true;
                 for (let i = 0; i < visibleData.length; i++) {
                     const point = visibleData[i];
                     const rates = point.rates || {};
                     const rateObj = rates[substance] || { forward: 0, reverse: 0 };
                     const rate = rateObj.forward || 0;
+
                     const x = plotOriginX + ((point.time + timeShift) - tStart) * pxPerSec;
                     const y = plotOriginY - (rate / yMax) * plotHeight;
-                    if (i === 0) {
+
+                    if (firstPoint) {
                         ctx.moveTo(x, y);
+                        firstPoint = false;
                     } else {
                         ctx.lineTo(x, y);
                     }
@@ -597,15 +604,19 @@ export class RateChart {
                 ctx.lineWidth = CONFIG.CHART.LINE_WIDTH;
                 ctx.setLineDash([5, 3]);  // 虚线
                 ctx.beginPath();
+                let firstPoint = true;
                 for (let i = 0; i < visibleData.length; i++) {
                     const point = visibleData[i];
                     const rates = point.rates || {};
                     const rateObj = rates[substance] || { forward: 0, reverse: 0 };
                     const rate = rateObj.reverse || 0;
+
                     const x = plotOriginX + ((point.time + timeShift) - tStart) * pxPerSec;
                     const y = plotOriginY - (rate / yMax) * plotHeight;
-                    if (i === 0) {
+
+                    if (firstPoint) {
                         ctx.moveTo(x, y);
+                        firstPoint = false;
                     } else {
                         ctx.lineTo(x, y);
                     }

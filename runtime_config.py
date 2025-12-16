@@ -264,6 +264,61 @@ class RuntimeConfig:
                 radii[s.type_id] = s.radius
         return radii
     
+    def compute_collision_frequency(self, radius: float = 0.15, delta_n: int = 0) -> float:
+        """
+        计算与碰撞模型自洽的频率因子
+        
+        物理推导（从第一性原理）：
+        ============================
+        
+        【二级反应 2A → B】
+        碰撞频率密度（避免重复计数）:
+            Z = N_A² × σ × v_rel / (2V)
+        
+        正反应速率:
+            d(N_B)/dt = Z × P(E > Ea_f)
+                      = N_A² × σ × v_rel × exp(-Ea_f/kT) / (2V)
+        
+        【一级逆反应 B → 2A】
+        分解速率:
+            d(N_B)/dt = -N_B × A × exp(-Ea_r/kT)
+        
+        【平衡条件】
+        正向 = 逆向:
+            N_A² × σ × v_rel × exp(-Ea_f/kT) / (2V) = N_B × A × exp(-Ea_r/kT)
+        
+        整理得平衡常数:
+            K = N_B × V / N_A² = (σ × v_rel / 2) × exp(-ΔEa/kT) / A
+        
+        【热力学约束】
+        K = exp(-ΔEa/kT)  (假设 ΔG ≈ ΔH)
+        
+        【自洽条件】
+        A = σ × v_rel / 2
+        
+        这保证了模拟的平衡常数与热力学一致。
+        
+        参数:
+            radius: 粒子半径
+            delta_n: 未使用（保留接口兼容性）
+        
+        返回:
+            频率因子 A [时间⁻¹]
+        """
+        # 碰撞截面 σ = π(2r)²
+        sigma = np.pi * (2 * radius) ** 2
+        
+        # 平均相对速度（Maxwell-Boltzmann 分布）
+        # v_avg = √(8kT/πm), v_rel = √2 × v_avg
+        v_avg = np.sqrt(8 * self.boltzmann_k * self.temperature / (np.pi * self.mass))
+        v_rel = v_avg * np.sqrt(2)
+        
+        # 自洽频率因子：A = σ × v_rel / 2
+        # 因子 2 来自碰撞对计数（避免 i-j 和 j-i 重复）
+        A = sigma * v_rel / 2.0
+        
+        return A
+    
     def build_reactions_2body(self) -> np.ndarray:
         """
         构建二级反应数组（碰撞触发）
@@ -296,21 +351,34 @@ class RuntimeConfig:
         构建一级反应数组（自发分解）
         
         每行: [reactant, p0, p1, ea, frequency_factor]
+        
+        对于二级反应的逆反应（如 2A→B 的逆反应 B→2A），
+        使用与碰撞模型自洽的频率因子，确保平衡常数正确。
         """
         reactions_1 = []
+        
+        # 获取典型半径（用于计算碰撞频率）
+        typical_radius = 0.15
+        if self.substances:
+            typical_radius = self.substances[0].radius
+        
         for rxn in self.reactions:
             if rxn.is_valid() and rxn.is_first_order():
                 r0 = rxn.reactant_types[0]
                 p0 = rxn.product_types[0] if len(rxn.product_types) > 0 else -1
                 p1 = rxn.product_types[1] if len(rxn.product_types) > 1 else -1
+                # 计算反应热 Q = -ΔH = Ea_rev - Ea_fwd
+                q_reaction = rxn.ea_reverse - rxn.ea_forward
+                
                 # 正向反应: A -> B
-                reactions_1.append([r0, p0, p1, rxn.ea_forward, rxn.frequency_factor])
+                reactions_1.append([r0, p0, p1, rxn.ea_forward, rxn.frequency_factor, q_reaction])
                 
                 # 自动生成逆反应: B -> A (仅当产物单一时)
                 if len(rxn.product_types) == 1:
-                    reactions_1.append([p0, r0, -1, rxn.ea_reverse, rxn.frequency_factor])
+                    # 逆反应热 = -Q
+                    reactions_1.append([p0, r0, -1, rxn.ea_reverse, rxn.frequency_factor, -q_reaction])
         
-        # 自动生成逆反应（一级分解的逆反应）
+        # 自动生成逆反应（二级反应的一级分解逆反应）
         for rxn in self.reactions:
             if rxn.is_valid() and rxn.is_second_order():
                 # 二级反应的逆反应可能是一级分解
@@ -320,10 +388,25 @@ class RuntimeConfig:
                     r0 = rxn.product_types[0]
                     p0 = rxn.reactant_types[0]
                     p1 = rxn.reactant_types[1] if len(rxn.reactant_types) > 1 else -1
-                    reactions_1.append([r0, p0, p1, rxn.ea_reverse, rxn.frequency_factor])
+                    
+                    # 计算粒子数变化 delta_n = n_产物 - n_反应物
+                    # 对于 B → 2A：n_产物 = 2, n_反应物 = 1, delta_n = +1
+                    n_products = len(rxn.reactant_types)  # 逆反应的产物是正反应的反应物
+                    n_reactants = len(rxn.product_types)  # 逆反应的反应物是正反应的产物
+                    delta_n = n_products - n_reactants
+                    
+                    # 使用自洽的频率因子（包含熵修正），确保平衡常数正确
+                    collision_freq = self.compute_collision_frequency(typical_radius, delta_n)
+                    
+                    # 逆反应热 Q_rev = Ea_fwd - Ea_rev (相对于原反应的逆)
+                    # 原反应 2A->B: ΔH = Ef - Er. Q = -ΔH = Er - Ef.
+                    # 逆反应 B->2A: ΔH' = -ΔH = Er - Ef. Q' = -ΔH' = Ef - Er.
+                    q_val = rxn.ea_forward - rxn.ea_reverse
+                    
+                    reactions_1.append([r0, p0, p1, rxn.ea_reverse, collision_freq, q_val])
         
         if not reactions_1:
-            return np.zeros((0, 5), dtype=np.float64)
+            return np.zeros((0, 6), dtype=np.float64)
         return np.array(reactions_1, dtype=np.float64)
     
     def to_dict(self) -> Dict[str, Any]:

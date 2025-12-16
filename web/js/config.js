@@ -9,7 +9,7 @@ export const CONFIG = {
 
     // 图表配置
     CHART: {
-        MAX_POINTS: 600,           // 最大历史数据点数
+        MAX_POINTS: 5000,          // 最大历史数据点数（约166秒@30FPS）
         LINE_WIDTH: 1,             // 细线条
         X_AXIS_VISIBLE_POINTS: 300, // 可见时间窗口（数据点数）
         PADDING: {

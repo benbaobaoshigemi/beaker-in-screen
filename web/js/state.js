@@ -160,11 +160,23 @@ class StateManager {
 
         // 图表数据：记录所有物质的浓度
         const chartData = this.state.chartData;
-        chartData.concentrationHistory.push({
-            time: serverState.time,
-            counts: { ...substanceCounts },
-        });
-        if (chartData.concentrationHistory.length > 1000) {
+
+        // 防止重复数据：检查时间戳是否已存在（避免反复描画）
+        const lastConcentrationEntry = chartData.concentrationHistory[chartData.concentrationHistory.length - 1];
+        const serverTimeRounded = Math.round(serverState.time * 1000) / 1000; // 保留3位小数
+        const shouldAddConcentration = !lastConcentrationEntry ||
+            Math.abs(lastConcentrationEntry.time - serverTimeRounded) > 1e-6;
+
+        if (shouldAddConcentration) {
+            chartData.concentrationHistory.push({
+                time: serverTimeRounded,
+                counts: { ...substanceCounts },
+            });
+        }
+
+        // 增大历史数据容量：5000点，约等于 5000/30 ≈ 166秒的数据
+        const maxHistoryPoints = 5000;
+        if (chartData.concentrationHistory.length > maxHistoryPoints) {
             chartData.concentrationHistory.shift();
         }
 
@@ -231,20 +243,24 @@ class StateManager {
         this.lastTime = currentTime;
         this.lastSubstanceCounts = { ...substanceCounts };
 
-        // 首帧/无 dt 时不推入空速率点，避免曲线出现“从 0 突跳”的视觉时间差
+        // 首帧/无 dt 时不推入空速率点，避免曲线出现"从 0 突跳"的视觉时间差
         if (hasValidRate) {
-            chartData.rateHistory.push({
-                time: rateTime,
-                rates: rates,  // { substance: { forward, reverse } }
-            });
+            // 防止重复数据：检查时间戳是否已存在（避免反复描画）
+            const rateTimeRounded = Math.round(rateTime * 1000) / 1000;
+            const lastRateEntry = chartData.rateHistory[chartData.rateHistory.length - 1];
+            const shouldAddRate = !lastRateEntry ||
+                Math.abs(lastRateEntry.time - rateTimeRounded) > 1e-6;
+
+            if (shouldAddRate) {
+                chartData.rateHistory.push({
+                    time: rateTimeRounded,
+                    rates: rates,  // { substance: { forward, reverse } }
+                });
+            }
         }
 
-        // 限制历史长度
-        const maxPoints = 600;
-        if (chartData.concentrationHistory.length > maxPoints) {
-            chartData.concentrationHistory.shift();
-        }
-        if (chartData.rateHistory.length > maxPoints) {
+        // 限制速率历史长度（复用浓度数据的容量限制）
+        if (chartData.rateHistory.length > maxHistoryPoints) {
             chartData.rateHistory.shift();
         }
 
@@ -392,9 +408,9 @@ class StateManager {
         this.lastReactantCount = undefined;
         this.lastTime = 0;
 
-        // 清空速率相关缓存（按物种）
-        this.forwardRateHistory = undefined;
-        this.reverseRateHistory = undefined;
+        // 清空速率 EMA 平滑缓存（按物种）
+        this.forwardRateEMA = undefined;
+        this.reverseRateEMA = undefined;
         this.lastSubstanceCounts = undefined;
 
         // 通知所有相关订阅者
@@ -402,6 +418,51 @@ class StateManager {
         this.notify('particles');
         this.notify('concentration');
         this.notify('chartData');
+    }
+
+    /**
+     * 获取可导出的历史数据
+     * 用于后续实现 CSV/JSON 导出功能
+     * @returns {Object} 结构化的导出数据
+     */
+    getExportData() {
+        const chartData = this.state.chartData;
+        const config = this.state.config;
+
+        // 获取物质列表
+        const substances = config.substances || [];
+        const substanceIds = substances.map(s => s.id);
+
+        // 构建浓度数据表格
+        const concentrationData = chartData.concentrationHistory.map(point => {
+            const row = { time: point.time };
+            for (const id of substanceIds) {
+                row[`count_${id}`] = point.counts?.[id] || 0;
+            }
+            return row;
+        });
+
+        // 构建速率数据表格
+        const rateData = chartData.rateHistory.map(point => {
+            const row = { time: point.time };
+            for (const id of substanceIds) {
+                const rates = point.rates?.[id] || { forward: 0, reverse: 0 };
+                row[`forward_${id}`] = rates.forward;
+                row[`reverse_${id}`] = rates.reverse;
+            }
+            return row;
+        });
+
+        return {
+            metadata: {
+                exportTime: new Date().toISOString(),
+                simulationTime: this.state.simulation.time,
+                substances: substances.map(s => ({ id: s.id, name: s.name || s.id })),
+                temperature: config.temperature,
+            },
+            concentrationHistory: concentrationData,
+            rateHistory: rateData,
+        };
     }
 }
 

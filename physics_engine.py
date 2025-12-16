@@ -113,12 +113,13 @@ def process_1body_reactions(types, pos, vel, reactions_1body,
     """
     处理一级反应（自发分解）
     
-    参数:
-        reactions_1body: [reactant, p0, p1, ea, frequency_factor] 数组
+    Parameters:
+        reactions_1body: [reactant, p0, p1, ea, frequency_factor, q_val] array
     
-    物理原理：
-        - 速率常数 k = A * exp(-Ea / kT)
-        - 每个时间步分解概率 p = k * dt
+    Physics:
+        - Rate constant k = A * exp(-Ea / kT)
+        - Probability p = k * dt
+        - Energy conservation: E_final = E_initial + Q
     """
     n_particles = len(types)
     n_reactions = len(reactions_1body)
@@ -142,29 +143,76 @@ def process_1body_reactions(types, pos, vel, reactions_1body,
                 k = freq_factor * math.exp(-ea / (boltzmann_k * temperature))
                 prob = k * dt
                 
-                # 限制概率在合理范围
-                if prob > 1.0:
-                    prob = 1.0
+                # 限制概率
+                if prob > 1.0: prob = 1.0
                 
                 if np.random.random() < prob:
-                    # 发生分解
-                    types[i] = p0
+                    # 获取反应热 (第6列)
+                    q_val = reactions_1body[r, 5]
                     
-                    # 如果有第二个产物，需要激活一个新粒子
+                    # 能量检查 (对于吸热反应)
+                    # 假设 1->2 分解，质量翻倍 (m -> 2m)
+                    # 动量守恒要求 v_new = v_old / 2
+                    # 能量方程: E_final = E_initial + Q
+                    # m(v/2)^2 + m(v/2)^2 + m(dv)^2 = 0.5mv^2 + Q
+                    # 0.5mv^2 + m(dv)^2 = 0.5mv^2 + Q
+                    # m(dv)^2 = Q
+                    # 此处推导显示：如果 v_new = v_old/2，则平动动能耗散一半，正好给分离提供能量？
+                    # 让我们重新推导:
+                    # Initial: p=mv, E = p^2/2m + Q_in (internal potential converted)
+                    # Final: p1+p2=p. E = p1^2/2m + p2^2/2m.
+                    # let p1 = p/2 + q, p2 = p/2 - q (q is relative momentum)
+                    # E = 2 * (p^2/4 + q^2) / 2m = p^2/4m + q^2/m
+                    # Delta E = E_final - E_initial = -p^2/4m + q^2/m
+                    # We have energy source Q_val.
+                    # So Q_val = Delta E = q^2/m - p^2/4m
+                    # q^2/m = Q_val + p^2/4m
+                    # separation velocity dv = q/m
+                    # m dv^2 = Q_val + 0.25 m v^2
+                    # dv = sqrt(Q_val/m + 0.25 v^2)
+                    
+                    v_sq = vel[i, 0]**2 + vel[i, 1]**2 + vel[i, 2]**2
+                    energy_budget = q_val/mass + 0.25*v_sq
+                    
+                    if energy_budget < 0:
+                        # 能量不足以发生反应（吸热太多且动能不足）
+                        continue
+                        
+                    delta_v = math.sqrt(energy_budget)
+                    
+                    # 生成随机分离方向
+                    theta = np.random.random() * 2 * np.pi
+                    phi = np.random.random() * np.pi
+                    dx = math.sin(phi) * math.cos(theta)
+                    dy = math.sin(phi) * math.sin(theta)
+                    dz = math.cos(phi)
+                    
+                    # 基础速度 (动量守恒 v_base = v / 2)
+                    vx_base = vel[i, 0] * 0.5
+                    vy_base = vel[i, 1] * 0.5
+                    vz_base = vel[i, 2] * 0.5
+                    
+                    # 更新粒子 i
+                    types[i] = p0
+                    vel[i, 0] = vx_base + dx * delta_v
+                    vel[i, 1] = vy_base + dy * delta_v
+                    vel[i, 2] = vz_base + dz * delta_v
+                    
+                    # 如果有第二个产物
                     if p1 >= 0:
                         slot = find_inactive_slot(types, n_particles)
                         if slot >= 0:
                             types[slot] = p1
-                            # 复制位置，给予随机速度
+                            # 相同位置
                             pos[slot, 0] = pos[i, 0]
                             pos[slot, 1] = pos[i, 1]
                             pos[slot, 2] = pos[i, 2]
-                            sigma = math.sqrt(boltzmann_k * temperature / mass)
-                            vel[slot, 0] = np.random.normal(0, sigma)
-                            vel[slot, 1] = np.random.normal(0, sigma)
-                            vel[slot, 2] = np.random.normal(0, sigma)
+                            # 反向分离
+                            vel[slot, 0] = vx_base - dx * delta_v
+                            vel[slot, 1] = vy_base - dy * delta_v
+                            vel[slot, 2] = vz_base - dz * delta_v
                     
-                    break  # 粒子已反应，跳出反应循环
+                    break  # 粒子已反应
 
 @njit(cache=True)
 def build_cell_list(pos, n, box_size, cell_divisions, types=None, out_head=None, out_next=None):
@@ -380,17 +428,18 @@ def resolve_collisions_generic(pos, vel, types, head, next_particle, cell_divisi
                                     if vn < 0:  # 接近中
                                         e_coll = 0.5 * reduced_mass * vn * vn
                                         
-                                        # 遍历反应列表检查匹配
+                                        # 收集所有匹配且能量足够的反应
+                                        # 竞争反应需要按概率选择，而不是先到先得
                                         reacted = False
-                                        energy_change = 0.0  # 反应释放/吸收的能量
+                                        energy_change = 0.0
+                                        n_matched = 0
+                                        matched_indices = np.zeros(n_reactions, dtype=np.int32)
+                                        matched_weights = np.zeros(n_reactions, dtype=np.float64)
                                         
                                         for r in range(n_reactions):
                                             r0 = int(reactions_2body[r, 0])
                                             r1 = int(reactions_2body[r, 1])
-                                            p0 = int(reactions_2body[r, 2])
-                                            p1 = int(reactions_2body[r, 3])
                                             ea_forward = reactions_2body[r, 4]
-                                            ea_reverse = reactions_2body[r, 5]
                                             
                                             # 检查是否匹配反应物
                                             matched = False
@@ -398,51 +447,103 @@ def resolve_collisions_generic(pos, vel, types, head, next_particle, cell_divisi
                                                 matched = True
                                             
                                             if matched and e_coll >= ea_forward:
-                                                # 执行反应
-                                                types[i] = p0
-                                                types[j] = p1  # 可能是 -1（失活）
-                                                reacted = True
-                                                
-                                                # 计算反应焓 ΔH = Ea_forward - Ea_reverse
-                                                # 若 ΔH < 0（放热），释放能量给产物
-                                                # 若 ΔH > 0（吸热），从动能中吸收能量
-                                                delta_h = ea_forward - ea_reverse
-                                                energy_change = -delta_h  # 放热为正
-                                                
-                                                break
+                                                # 记录匹配的反应及其 Boltzmann 权重
+                                                # 权重 = exp(-Ea/kT)，Ea 越低权重越大
+                                                kT = boltzmann_k * max(temperature, 1.0)
+                                                weight = math.exp(-ea_forward / kT)
+                                                matched_indices[n_matched] = r
+                                                matched_weights[n_matched] = weight
+                                                n_matched += 1
                                         
-                                        # 硬球弹性碰撞响应（等质量）
-                                        # 交换法向速度分量
-                                        vel[i, 0] -= vn * nx
-                                        vel[i, 1] -= vn * ny
-                                        vel[i, 2] -= vn * nz
-                                        vel[j, 0] += vn * nx
-                                        vel[j, 1] += vn * ny
-                                        vel[j, 2] += vn * nz
-                                        
-                                        # 如果发生反应，将能量变化分配给两个粒子
-                                        # 放热反应：产物获得额外动能，沿法向分离
-                                        if reacted and abs(energy_change) > 1e-9:
-                                            # 计算额外速度分量
-                                            # E = 0.5 * m * v^2 => v = sqrt(2E/m)
-                                            # 每个粒子分得一半能量
-                                            e_per_particle = abs(energy_change) / 2.0
-                                            v_extra = math.sqrt(2.0 * e_per_particle / mass)
+                                        # 如果有匹配的反应，按权重随机选择一个
+                                        if n_matched > 0:
+                                            # 归一化权重
+                                            total_weight = 0.0
+                                            for m in range(n_matched):
+                                                total_weight += matched_weights[m]
                                             
-                                            if energy_change > 0:  # 放热，加速分离
-                                                vel[i, 0] += v_extra * nx
-                                                vel[i, 1] += v_extra * ny
-                                                vel[i, 2] += v_extra * nz
-                                                vel[j, 0] -= v_extra * nx
-                                                vel[j, 1] -= v_extra * ny
-                                                vel[j, 2] -= v_extra * nz
-                                            else:  # 吸热，减速分离
-                                                vel[i, 0] -= v_extra * nx
-                                                vel[i, 1] -= v_extra * ny
-                                                vel[i, 2] -= v_extra * nz
-                                                vel[j, 0] += v_extra * nx
-                                                vel[j, 1] += v_extra * ny
-                                                vel[j, 2] += v_extra * nz
+                                            # 随机选择
+                                            rand_val = np.random.random() * total_weight
+                                            cumsum = 0.0
+                                            selected_r = matched_indices[0]
+                                            for m in range(n_matched):
+                                                cumsum += matched_weights[m]
+                                                if rand_val < cumsum:
+                                                    selected_r = matched_indices[m]
+                                                    break
+                                            
+                                            # 执行选中的反应
+                                            p0 = int(reactions_2body[selected_r, 2])
+                                            p1 = int(reactions_2body[selected_r, 3])
+                                            ea_forward = reactions_2body[selected_r, 4]
+                                            ea_reverse = reactions_2body[selected_r, 5]
+                                            
+                                            types[i] = p0
+                                            types[j] = p1  # 可能是 -1（失活）
+                                            reacted = True
+                                            
+                                            # 计算反应焓释放的能量 Q = -ΔH = Ea_rev - Ea_fwd
+                                            # 注意：Code previously used delta_h = ea_forward - ea_reverse.
+                                            # If ea_fwd < ea_rev (exo), delta_h < 0. Energy release > 0.
+                                            # We want q_val > 0 for exothermic.
+                                            # q_val = ea_reverse - ea_forward
+                                            q_val = ea_reverse - ea_forward
+                                        
+                                        # -------------------------------------------------------------
+                                        # 严格的能量动量更新
+                                        # -------------------------------------------------------------
+                                        
+                                        # 如果发生反应，调整相对动能
+                                        if reacted:
+                                            # 法向相对速度平方 v_n^2
+                                            # 碰撞能量 E_coll = 0.5 * mu * vn^2  (vn < 0)
+                                            # 新能量 E_new = E_coll + Q_val
+                                            # 0.5 * mu * vn_new^2 = 0.5 * mu * vn^2 + Q_val
+                                            # vn_new^2 = vn^2 + 2 * Q_val / mu
+                                            # mu = m/2 => 2/mu = 4/m
+                                            
+                                            vn_sq = vn * vn
+                                            vn_new_sq = vn_sq + (4.0 * q_val / mass)
+                                            
+                                            # 理论上应该总是 >= 0，因为我们检查了 E_coll >= Ea_fwd
+                                            # 且 E_new = E_coll + (Ea_rev - Ea_fwd) >= Ea_rev >= 0
+                                            if vn_new_sq < 0: vn_new_sq = 0.0
+                                            
+                                            # 反应后总是分离 (vn_new > 0)
+                                            vn_new = math.sqrt(vn_new_sq)
+                                            
+                                            # 速度增量向量
+                                            # 原始反弹: dv = -2*vn (goes from vn to -vn)
+                                            # 反应反弹: dv = vn_new - vn (goes from vn to vn_new)
+                                            # Vector change dV = (vn_new - vn) * n
+                                            
+                                            # Update velocities
+                                            # Impulse apply: v_i += dV * (mu/m_i) = dV * 0.5
+                                            #                v_j -= dV * 0.5
+                                            
+                                            impulse = (vn_new - vn) * 0.5
+                                            
+                                            vel[i, 0] += impulse * nx
+                                            vel[i, 1] += impulse * ny
+                                            vel[i, 2] += impulse * nz
+                                            vel[j, 0] -= impulse * nx
+                                            vel[j, 1] -= impulse * ny
+                                            vel[j, 2] -= impulse * nz
+
+                                        else:
+                                            # 普通弹性碰撞
+                                            # v_n' = -v_n
+                                            # change = -v_n - v_n = -2v_n
+                                            # impulse = -vn
+                                            
+                                            impulse = -vn
+                                            
+                                            vel[i, 0] += impulse * nx
+                                            vel[i, 1] += impulse * ny
+                                            vel[i, 2] += impulse * nz
+                                            vel[j, 0] -= impulse * nx
+                                            vel[j, 1] -= impulse * ny
+                                            vel[j, 2] -= impulse * nz
                                 
                             j = next_particle[j]
             
