@@ -180,6 +180,7 @@ class RuntimeConfig:
     """
     # 控制参数
     temperature: float = 300.0
+    use_thermostat: bool = True  # 是否启用恒温器 (True=恒温, False=绝热)
     
     # 物质配置
     substances: List[SubstanceConfig] = field(default_factory=list)
@@ -191,11 +192,13 @@ class RuntimeConfig:
     properties_locked: bool = False
     
     # 系统参数
-    box_size: float = 40.0
+    box_size: float = 17.5  # 默认值对应滑条 1/4 位置
+    box_size_min: float = 10.0  # 最小容器尺寸
+    box_size_max: float = 40.0  # 最大容器尺寸
     mass: float = 1.0
     boltzmann_k: float = 0.1
     dt: float = 0.002
-    slice_thickness: float = 5.0  # 显示区域厚度（25% of box_size）
+    slice_thickness: float = 4.375  # box_size * 0.25
     
     # 粒子管理
     max_particles: int = 20000
@@ -213,19 +216,33 @@ class RuntimeConfig:
     def _init_default_substances(self):
         """默认物质：A(红), B(蓝)"""
         self.substances = [
-            SubstanceConfig(id="A", type_id=0, color_hue=0,   radius=0.15, initial_count=10000),
+            SubstanceConfig(id="A", type_id=0, color_hue=0,   radius=0.15, initial_count=5000),
             SubstanceConfig(id="B", type_id=1, color_hue=210, radius=0.15, initial_count=0),
         ]
     
     def _init_default_reactions(self):
-        """默认反应：2A ⇌ B"""
+        """默认反应：2A ⇌ B
+        
+        物理参数设计：
+        - kB = 0.1, T = 300K → kT = 30 模拟能量单位
+        - Ea_forward = 20 → Ea/kT ≈ 0.67 → 碰撞反应概率约 50%
+        - Ea_reverse = 30 → Ea/kT = 1.0 → 碰撞反应概率约 37%
+        - ΔH = 20 - 30 = -10（放热10单位）
+        
+        绝热模式预期：
+        - 初始 5000 粒子，约 2500 次正反应完成
+        - 总释放能量 ≈ 2500 × 10 = 25000 单位
+        - 系统热容 C = 1.5 × N × kB ≈ 750
+        - 预期温升 ΔT ≈ 25000 / 750 ≈ 33K（合理范围）
+        """
         self.reactions = [
             ReactionConfig(
                 equation="2A=B",
                 reactant_types=[0, 0],  # 2A
                 product_types=[1],       # B
-                ea_forward=30.0,
-                ea_reverse=60.0,  # 逆反应活化能改为60
+                ea_forward=20.0,   # 正反应活化能（较低，反应容易发生）
+                ea_reverse=30.0,   # 逆反应活化能（较高，逆反应困难）
+                # ΔH = 20 - 30 = -10（放热反应）
             ),
         ]
     
@@ -312,10 +329,13 @@ class RuntimeConfig:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "temperature": self.temperature,
+            "useThermostat": self.use_thermostat,
             "substances": [s.to_dict() for s in self.substances],
             "reactions": [r.to_dict(self.substances) for r in self.reactions],
             "propertiesLocked": self.properties_locked,
             "boxSize": self.box_size,
+            "boxSizeMin": self.box_size_min,
+            "boxSizeMax": self.box_size_max,
             "mass": self.mass,
             "dt": self.dt,
             "sliceThickness": self.slice_thickness,
@@ -325,6 +345,9 @@ class RuntimeConfig:
     def update_from_dict(self, data: Dict[str, Any]) -> None:
         if "temperature" in data:
             self.temperature = float(data["temperature"])
+        
+        if "useThermostat" in data:
+            self.use_thermostat = bool(data["useThermostat"])
         
         if not self.properties_locked:
             if "substances" in data:
@@ -351,6 +374,15 @@ class RuntimeConfig:
         
         if "sliceThickness" in data:
             self.slice_thickness = float(data["sliceThickness"])
+        
+        # 容器体积更新（仅在未锁定时允许）
+        if not self.properties_locked and "boxSize" in data:
+            new_box = float(data["boxSize"])
+            # 限制范围
+            new_box = max(self.box_size_min, min(self.box_size_max, new_box))
+            self.box_size = new_box
+            # 自动调节 slice_thickness = 25% of box_size
+            self.slice_thickness = new_box * 0.25
     
     def lock_properties(self) -> None:
         self.properties_locked = True

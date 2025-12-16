@@ -24,8 +24,8 @@ export class ConcentrationChart {
         this.viewEndIndex = null; // slice 的 end
         this.defaultWindowPoints = CONFIG.CHART.X_AXIS_VISIBLE_POINTS;
         this.windowPoints = this.defaultWindowPoints;
-        // 允许缩小视图(看更全局)：窗口可变大；允许放大回默认比例：窗口可变小到默认值；不允许小于默认值
-        this.minWindowPoints = this.defaultWindowPoints;
+        // 允许缩小视图(看更全局)：窗口可变大到全部数据；允许放大回默认比例
+        this.minWindowPoints = 2;
         this.maxWindowPoints = CONFIG.CHART.MAX_POINTS;
 
         // 运行状态
@@ -36,6 +36,9 @@ export class ConcentrationChart {
         this.activePointers = new Map();
         this.gestureMode = null; // 'pan' | 'pinch' | null
         this.gestureStart = null;
+
+        // Y 轴范围（根据配置的总粒子数动态初始化）
+        this.yMax = CONFIG.CHART.CONCENTRATION.Y_MAX;
 
         this.init();
     }
@@ -136,6 +139,18 @@ export class ConcentrationChart {
             valuesContainer.innerHTML = Object.entries(counts)
                 .map(([id, count]) => `<span>[${id}] = ${count}</span>`)
                 .join('');
+        });
+
+        // 订阅配置变化，动态调整 Y 轴范围
+        stateManager.subscribe('config', (config) => {
+            if (config && config.substances) {
+                // 计算总粒子数，Y 轴范围设为总粒子数的 1.2 倍（留出余量）
+                const totalParticles = config.substances.reduce((sum, s) => sum + (s.initialCount || 0), 0);
+                if (totalParticles > 0) {
+                    // 向上取整到合适的刻度（1000的倍数）
+                    this.yMax = Math.ceil(totalParticles * 1.2 / 1000) * 1000;
+                }
+            }
         });
     }
 
@@ -331,9 +346,9 @@ export class ConcentrationChart {
         ctx.lineTo(width - padding.RIGHT, plotOriginY);
         ctx.stroke();
 
-        // Y 轴固定范围（浓度）
+        // Y 轴动态范围（根据配置的总粒子数自动调整）
         const yMin = CONFIG.CHART.CONCENTRATION.Y_MIN;
-        const yMax = CONFIG.CHART.CONCENTRATION.Y_MAX;
+        const yMax = this.yMax;
 
         // 绘制左侧 Y 轴刻度
         ctx.fillStyle = colors.textMuted;

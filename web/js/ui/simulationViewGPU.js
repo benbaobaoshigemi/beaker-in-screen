@@ -240,6 +240,10 @@ export class SimulationViewGPU {
         const screenScale = Math.min(width, height);
         const threshold = this.highlightEnergyThreshold;
 
+        // 用于粒子显示半径计算的固定参考值（不随容器体积变化）
+        // 这样容器体积调节时粒子显示大小保持恒定
+        const displayBoxSize = CONFIG.SIMULATION.BOX_SIZE;
+
         // 构建物质类型映射
         const substanceByType = new Map();
         for (const s of substances) {
@@ -275,7 +279,8 @@ export class SimulationViewGPU {
             if (substance) {
                 const colorHue = substance.colorHue || 0;
                 const physicsRadius = substance.radius || 0.15;
-                const radius = (physicsRadius / boxSize) * screenScale;
+                // 使用固定参考 boxSize 计算显示半径，容器体积变化时粒子显示大小保持恒定
+                const radius = (physicsRadius / displayBoxSize) * screenScale;
                 const texture = this.createParticleTexture(colorHue, radius);
 
                 if (sprite.texture !== texture) {

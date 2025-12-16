@@ -18,8 +18,19 @@ export class ControlPanel {
     init() {
         this.setupReactionInputs();
         this.setupControlSliders();
+        this.setupVolumeSlider();
         this.setupButtons();
+        this.setupThermostatControls();
         this.parseReactionsAndBuildUI();
+        this.subscribeToTemperatureUpdates();
+
+        // 监听配置更新，同步 UI
+        stateManager.subscribe('config', (config) => {
+            if (config) {
+                this.syncThermostatUI(config.useThermostat);
+                this.syncVolumeUI(config.boxSize);
+            }
+        });
     }
 
     /**
@@ -77,7 +88,7 @@ export class ControlPanel {
             } else {
                 this.substances.set(id, {
                     radius: 0.15,
-                    initialCount: index === 0 ? 10000 : 0, // 第一个物质默认 10000
+                    initialCount: index === 0 ? 5000 : 0, // 第一个物质默认 5000
                     colorHue: DEFAULT_HUES[id] || 0
                 });
             }
@@ -172,6 +183,93 @@ export class ControlPanel {
                 }, 100);
             });
         }
+    }
+
+    /**
+     * 设置容器体积滑条
+     */
+    setupVolumeSlider() {
+        const volumeSlider = document.getElementById('volume-slider');
+        const volumeValue = document.getElementById('volume-value');
+
+        if (volumeSlider) {
+            let debounceTimer;
+            volumeSlider.addEventListener('input', (e) => {
+                const value = e.target.value;
+                if (volumeValue) volumeValue.textContent = value;
+
+                // 防抖: 150ms
+                clearTimeout(debounceTimer);
+                debounceTimer = setTimeout(() => {
+                    wsManager.updateConfig({ boxSize: parseFloat(value) });
+                }, 150);
+            });
+        }
+    }
+
+    /**
+     * 同步容器体积 UI
+     */
+    syncVolumeUI(boxSize) {
+        if (typeof boxSize !== 'number') return;
+
+        const volumeSlider = document.getElementById('volume-slider');
+        const volumeValue = document.getElementById('volume-value');
+
+        if (volumeSlider) volumeSlider.value = boxSize;
+        if (volumeValue) volumeValue.textContent = boxSize.toFixed(1);
+    }
+
+    /**
+     * 订阅温度更新（绝热模式下同步温度滑条）
+     */
+    subscribeToTemperatureUpdates() {
+        stateManager.subscribe('simulation', (sim) => {
+            // 绝热模式下，同步显示实时温度
+            const config = stateManager.getState().config;
+            if (config && !config.useThermostat && sim.currentTemperature !== undefined) {
+                const tempSlider = document.getElementById('temp-slider');
+                const tempValue = document.getElementById('temp-value');
+
+                const roundedTemp = Math.round(sim.currentTemperature);
+                // 限制在滑条范围内
+                const clampedTemp = Math.max(100, Math.min(1000, roundedTemp));
+
+                if (tempSlider) tempSlider.value = clampedTemp;
+                if (tempValue) tempValue.textContent = roundedTemp;
+            }
+        });
+    }
+
+    /**
+     * 设置恒温器控制
+     */
+    setupThermostatControls() {
+        const radios = document.getElementsByName('thermostat-mode');
+        radios.forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    const useThermostat = e.target.value === 'true';
+                    console.log('Sending useThermostat:', useThermostat);
+                    wsManager.updateConfig({
+                        useThermostat: useThermostat
+                    });
+                }
+            });
+        });
+    }
+
+    /**
+     * 同步恒温器 UI 状态
+     */
+    syncThermostatUI(useThermostat) {
+        if (typeof useThermostat !== 'boolean') return;
+
+        const radios = document.getElementsByName('thermostat-mode');
+        radios.forEach(radio => {
+            // value is string "true" or "false"
+            radio.checked = (radio.value === 'true') === useThermostat;
+        });
     }
 
     /**

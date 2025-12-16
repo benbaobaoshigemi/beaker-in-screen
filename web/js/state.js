@@ -124,9 +124,10 @@ class StateManager {
      * @param {Object} serverState - 后端推送的状态
      */
     updateFromServer(serverState) {
-        // 更新模拟时间
+        // 更新模拟时间和实时温度
         this.update('simulation', {
             time: serverState.time,
+            currentTemperature: serverState.currentTemperature,
         });
 
         // 更新粒子
@@ -152,8 +153,8 @@ class StateManager {
             this.lastRate = undefined;
 
             // 重置速率平滑缓存，避免重置后用到旧历史造成时间/幅值假象
-            this.forwardRateHistory = undefined;
-            this.reverseRateHistory = undefined;
+            this.forwardRateEMA = undefined;
+            this.reverseRateEMA = undefined;
             this.lastSubstanceCounts = undefined;
         }
 
@@ -180,18 +181,20 @@ class StateManager {
             rateTime = this.lastTime + dt / 2;
             hasValidRate = true;
 
-            // 初始化 SMA 缓存
-            if (!this.forwardRateHistory) {
-                this.forwardRateHistory = {};
+            // 初始化 EMA 缓存（使用指数移动平均代替 SMA，避免窗口填充导致的拐点）
+            if (!this.forwardRateEMA) {
+                this.forwardRateEMA = {};
             }
-            if (!this.reverseRateHistory) {
-                this.reverseRateHistory = {};
+            if (!this.reverseRateEMA) {
+                this.reverseRateEMA = {};
             }
             if (!this.lastSubstanceCounts) {
                 this.lastSubstanceCounts = {};
             }
 
-            const smoothWindow = 15;
+            // EMA 平滑系数：alpha = 2/(N+1)，N=15 对应 alpha ≈ 0.125
+            // 较小的 alpha 意味着更平滑但响应更慢
+            const emaAlpha = 0.125;
 
             // 计算每个物种的正逆反应速率
             for (const [substance, count] of Object.entries(substanceCounts)) {
@@ -203,31 +206,24 @@ class StateManager {
                 // 逆反应速率：生成 (dN > 0)
                 const reverseRate = dN > 0 ? dN / dt : 0;
 
-                // SMA 平滑正反应速率
-                if (!this.forwardRateHistory[substance]) {
-                    this.forwardRateHistory[substance] = [];
+                // EMA 平滑正反应速率
+                // EMA = alpha * current + (1 - alpha) * previous
+                if (this.forwardRateEMA[substance] === undefined) {
+                    this.forwardRateEMA[substance] = forwardRate; // 首次初始化为当前值，避免从0开始
+                } else {
+                    this.forwardRateEMA[substance] = emaAlpha * forwardRate + (1 - emaAlpha) * this.forwardRateEMA[substance];
                 }
-                this.forwardRateHistory[substance].push(forwardRate);
-                if (this.forwardRateHistory[substance].length > smoothWindow) {
-                    this.forwardRateHistory[substance].shift();
-                }
-                const fwdHistory = this.forwardRateHistory[substance];
-                const smoothedForward = fwdHistory.reduce((a, b) => a + b, 0) / fwdHistory.length;
 
-                // SMA 平滑逆反应速率
-                if (!this.reverseRateHistory[substance]) {
-                    this.reverseRateHistory[substance] = [];
+                // EMA 平滑逆反应速率
+                if (this.reverseRateEMA[substance] === undefined) {
+                    this.reverseRateEMA[substance] = reverseRate;
+                } else {
+                    this.reverseRateEMA[substance] = emaAlpha * reverseRate + (1 - emaAlpha) * this.reverseRateEMA[substance];
                 }
-                this.reverseRateHistory[substance].push(reverseRate);
-                if (this.reverseRateHistory[substance].length > smoothWindow) {
-                    this.reverseRateHistory[substance].shift();
-                }
-                const revHistory = this.reverseRateHistory[substance];
-                const smoothedReverse = revHistory.reduce((a, b) => a + b, 0) / revHistory.length;
 
                 rates[substance] = {
-                    forward: smoothedForward,
-                    reverse: smoothedReverse,
+                    forward: this.forwardRateEMA[substance],
+                    reverse: this.reverseRateEMA[substance],
                 };
             }
         }

@@ -38,6 +38,9 @@ export class SimulationView {
         // 采用“绝对阈值”而非分位数阈值，确保 100K/1000K 高亮数量有明显变化
         this.highlightEnergyThreshold = 0.10;
 
+        // 渲染脏标记（性能优化：仅在数据更新时渲染）
+        this._needsRender = true;
+
         this.init();
     }
 
@@ -79,6 +82,7 @@ export class SimulationView {
     subscribeToState() {
         stateManager.subscribe('particles', (particles) => {
             this.particles = particles;
+            this._needsRender = true;  // 标记需要渲染
         });
 
         // 接收来自后端的能量统计（归一化）：包含 mean/std/threshold/nSigma
@@ -86,6 +90,7 @@ export class SimulationView {
             if (stats && typeof stats.threshold === 'number') {
                 // 使用服务端计算的物理阈值（normalized）
                 this.highlightEnergyThreshold = Math.max(0, Math.min(1, stats.threshold));
+                this._needsRender = true;
             }
         });
 
@@ -106,13 +111,14 @@ export class SimulationView {
 
             const elapsed = currentTime - lastTime;
 
-            // 如果间隔大于目标帧间隔，则渲染
-            if (elapsed > interval) {
+            // 仅在数据更新时渲染（性能优化：避免无更新帧空转）
+            if (elapsed > interval && this._needsRender) {
                 // 校正上次渲染时间，扣除超出部分（避免累积漂移）
                 lastTime = currentTime - (elapsed % interval);
 
                 this.render();
                 this.updateFps();
+                this._needsRender = false;  // 清除脏标记
             }
         };
         requestAnimationFrame(render);

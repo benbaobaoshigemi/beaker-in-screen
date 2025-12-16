@@ -28,8 +28,8 @@ export class RateChart {
         this.viewEndIndex = null; // slice 的 end
         this.defaultWindowPoints = CONFIG.CHART.X_AXIS_VISIBLE_POINTS;
         this.windowPoints = this.defaultWindowPoints;
-        // 允许缩小视图(看更全局)：窗口可变大；允许放大回默认比例：窗口可变小到默认值；不允许小于默认值
-        this.minWindowPoints = this.defaultWindowPoints;
+        // 允许缩小视图(看更全局)：窗口可变大到全部数据；允许放大回默认比例
+        this.minWindowPoints = 2;
         this.maxWindowPoints = CONFIG.CHART.MAX_POINTS;
 
         // 运行状态
@@ -44,8 +44,9 @@ export class RateChart {
         // 物种可见状态（用于图例开关）
         this.visibleSubstances = {};  // { 'A': { forward: true, reverse: true }, ... }
 
-        // 动态 Y 轴最大值
+        // 动态 Y 轴最大值（只允许向上扩展，不允许缩小）
         this.yMax = CONFIG.CHART.RATE.Y_MAX;
+        this.yMaxHistory = CONFIG.CHART.RATE.Y_MAX;  // 历史最大值
 
         this.init();
     }
@@ -106,7 +107,16 @@ export class RateChart {
      */
     subscribeToState() {
         stateManager.subscribe('chartData', (chartData) => {
-            this.data = chartData.rateHistory;
+            const newData = chartData.rateHistory;
+
+            // 检测重置：新数据为空，但旧数据非空
+            if (newData.length === 0 && this.data.length > 0) {
+                // 重置 Y 轴历史最大值
+                this.yMaxHistory = CONFIG.CHART.RATE.Y_MAX;
+                this.yMax = this.yMaxHistory;
+            }
+
+            this.data = newData;
 
             // 自动跟随最新数据（仅在运行态）
             if (this.followLatest) {
@@ -425,7 +435,7 @@ export class RateChart {
         ctx.lineTo(width - padding.RIGHT, plotOriginY);
         ctx.stroke();
 
-        // 动态计算 Y 轴范围（基于所有物种的最大值）
+        // 动态计算 Y 轴范围（只允许向上扩展，不允许缩小）
         if (this.data.length > 0) {
             let maxValue = 0;
             for (const point of this.data) {
@@ -437,7 +447,11 @@ export class RateChart {
                     if (rev > maxValue) maxValue = rev;
                 }
             }
-            this.yMax = Math.max(CONFIG.CHART.RATE.Y_MAX, maxValue * 1.2);
+            // 计算所需的最大值（带 20% 余量）
+            const requiredMax = Math.max(CONFIG.CHART.RATE.Y_MAX, maxValue * 1.2);
+            // 只允许向上扩展，不允许缩小（保持历史最大值）
+            this.yMaxHistory = Math.max(this.yMaxHistory, requiredMax);
+            this.yMax = this.yMaxHistory;
         }
 
         const yMax = this.yMax;

@@ -26,7 +26,8 @@ from physics_engine import (
     build_cell_list, 
     resolve_collisions,
     resolve_collisions_generic,
-    process_1body_reactions
+    process_1body_reactions,
+    apply_thermostat_numba
 )
 
 # ============================================================================
@@ -66,8 +67,16 @@ class PhysicsEngineAdapter:
         if self.cell_divs < 1:
             self.cell_divs = 1
         
+        # 预分配 Cell List 数组（性能优化：避免每帧重新分配）
+        num_cells = self.cell_divs ** 3
+        self._head = np.full(num_cells, -1, dtype=np.int32)
+        self._next_particle = np.full(self.max_particles, -1, dtype=np.int32)
+        
         # 初始化粒子
         self._init_particles()
+        
+        # 缓存活跃粒子数（性能优化：避免每帧重新计算）
+        self._active_count = self.initial_active
         
         # 模拟时间
         self.sim_time = 0.0
@@ -112,8 +121,13 @@ class PhysicsEngineAdapter:
             self.vel[:offset] -= v_mean
     
     def get_active_count(self) -> int:
-        """获取活跃粒子数"""
-        return int(np.sum(self.types >= 0))
+        """获取活跃粒子数（使用缓存值）"""
+        return self._active_count
+    
+    def _update_active_count(self) -> int:
+        """重新计算活跃粒子数并更新缓存"""
+        self._active_count = int(np.sum(self.types >= 0))
+        return self._active_count
     
     def update(self):
         """执行一步物理更新"""
@@ -125,23 +139,37 @@ class PhysicsEngineAdapter:
             self.sim_time += dt
             return
         
-        # 恒温器
-        active_mask = self.types >= 0
-        v_sq = np.sum(self.vel[active_mask] ** 2)
-        current_temp = (self.mass * v_sq) / (3 * n_active * self.config.boltzmann_k)
+        # 性能监控（累计到类属性）
+        if not hasattr(self, '_perf_stats'):
+            self._perf_stats = {'thermostat': 0, 'position': 0, 'cell_list': 0, 
+                               'collision': 0, 'reaction_1body': 0, 'count': 0}
         
-        if current_temp > 0:
-            scale = math.sqrt(self.config.temperature / current_temp)
-            scale = np.clip(scale, 0.99, 1.01)  # Gentle thermostat
-            self.vel[active_mask] *= scale
+        import time
+        
+        # 恒温器（使用 Numba 加速版本）
+        t0 = time.perf_counter()
+        n_active = apply_thermostat_numba(
+            self.vel, self.types, 
+            self.config.temperature, 
+            self.mass, 
+            self.config.boltzmann_k,
+            self.config.use_thermostat
+        )
+        t1 = time.perf_counter()
+        self._perf_stats['thermostat'] += (t1 - t0) * 1000
         
         # 1. 更新位置（只更新活跃粒子）
         update_positions_numba(self.pos, self.vel, dt, box_size)
+        t2 = time.perf_counter()
+        self._perf_stats['position'] += (t2 - t1) * 1000
         
-        # 2. 构建 Cell List（跳过失活粒子）
+        # 2. 构建 Cell List（复用预分配数组）
         head, next_particle = build_cell_list(
-            self.pos, self.max_particles, box_size, self.cell_divs, self.types
+            self.pos, self.max_particles, box_size, self.cell_divs, self.types,
+            out_head=self._head, out_next=self._next_particle
         )
+        t3 = time.perf_counter()
+        self._perf_stats['cell_list'] += (t3 - t2) * 1000
         
         # 3. 二级反应（碰撞触发）
         if len(self.reactions_2body) > 0:
@@ -155,6 +183,8 @@ class PhysicsEngineAdapter:
                 self.config.boltzmann_k,
                 self.mass
             )
+        t4 = time.perf_counter()
+        self._perf_stats['collision'] += (t4 - t3) * 1000
         
         # 4. 一级反应（自发分解）
         if len(self.reactions_1body) > 0:
@@ -165,6 +195,26 @@ class PhysicsEngineAdapter:
                 self.config.boltzmann_k,
                 dt, box_size, self.mass
             )
+        t5 = time.perf_counter()
+        self._perf_stats['reaction_1body'] += (t5 - t4) * 1000
+        
+        # 更新活跃粒子数缓存（仅在有反应时才需要重新计算）
+        if len(self.reactions_2body) > 0 or len(self.reactions_1body) > 0:
+            self._update_active_count()
+        
+        self._perf_stats['count'] += 1
+        
+        # 每1000步输出一次详细性能报告
+        if self._perf_stats['count'] >= 1000:
+            total = sum(v for k, v in self._perf_stats.items() if k != 'count')
+            print(f"[PHYSICS] 恒温器: {self._perf_stats['thermostat']:.1f}ms | "
+                  f"位置: {self._perf_stats['position']:.1f}ms | "
+                  f"Cell: {self._perf_stats['cell_list']:.1f}ms | "
+                  f"碰撞: {self._perf_stats['collision']:.1f}ms | "
+                  f"1级反应: {self._perf_stats['reaction_1body']:.1f}ms | "
+                  f"总计: {total:.1f}ms")
+            self._perf_stats = {'thermostat': 0, 'position': 0, 'cell_list': 0, 
+                               'collision': 0, 'reaction_1body': 0, 'count': 0}
         
         self.sim_time += dt
     
@@ -203,9 +253,10 @@ class PhysicsEngineAdapter:
         norm_x = visible_pos[:, 0] / self.box_size
         norm_y = visible_pos[:, 1] / self.box_size
         
+        # 构建粒子数据（坐标需3位小数避免点阵效应，能量2位足够）
         particles = [
             {"x": round(float(norm_x[i]), 3), "y": round(float(norm_y[i]), 3), 
-             "type": int(visible_types[i]), "energy": round(float(normalized_energy[i]), 3)}
+             "type": int(visible_types[i]), "energy": round(float(normalized_energy[i]), 2)}
             for i in range(n_visible)
         ]
         
@@ -251,6 +302,15 @@ class PhysicsEngineAdapter:
             "threshold": round(float(threshold_norm), 6),
             "refTemp": max_temp,
         }
+        
+        # 计算实时温度（绝热模式下前端需要同步显示）
+        current_temperature = self.config.temperature  # 默认值
+        n_active = self.get_active_count()
+        if n_active > 0:
+            active_mask = self.types >= 0
+            v_sq_sum = float(np.sum(self.vel[active_mask] ** 2))
+            # T = (m * Σv²) / (3 * N * kB)
+            current_temperature = (self.mass * v_sq_sum) / (3.0 * n_active * kb)
 
         return {
             "time": self.sim_time,
@@ -258,6 +318,7 @@ class PhysicsEngineAdapter:
             "activeCount": self.get_active_count(),
             "particles": self.get_visible_particles(),
             "energyStats": energy_stats,
+            "currentTemperature": round(current_temperature, 1),
         }
     
     def reset(self):
@@ -274,14 +335,51 @@ class PhysicsEngineAdapter:
         self.reactions_1body = self.config.build_reactions_1body()
         self.radii = self.config.build_radii_array()
         
+        # 同步 box_size
+        old_box_size = self.box_size
+        self.box_size = self.config.box_size
+        
         # 重新计算 Cell 划分
         max_radius = max(self.radii) if len(self.radii) > 0 and max(self.radii) > 0 else 0.15
         self.cell_divs = int(self.box_size // (max_radius * 3.0))
         if self.cell_divs < 1:
             self.cell_divs = 1
         
-        # 仅更新参数，不重置粒子状态
-        pass
+        # 如果 box_size 变化，重新分配 Cell List 数组
+        if self.box_size != old_box_size:
+            num_cells = self.cell_divs ** 3
+            self._head = np.full(num_cells, -1, dtype=np.int32)
+            self._next_particle = np.full(self.max_particles, -1, dtype=np.int32)
+    
+    def update_box_size(self, new_box_size: float):
+        """
+        热更新容器体积
+        缩放粒子位置以适应新盒子尺寸
+        """
+        old_box_size = self.box_size
+        if abs(new_box_size - old_box_size) < 1e-6:
+            return
+        
+        # 缩放粒子位置
+        scale = new_box_size / old_box_size
+        active_mask = self.types >= 0
+        self.pos[active_mask] *= scale
+        
+        # 更新盒子尺寸
+        self.box_size = new_box_size
+        
+        # 重新计算 Cell 划分
+        max_radius = max(self.radii) if len(self.radii) > 0 and max(self.radii) > 0 else 0.15
+        self.cell_divs = int(self.box_size // (max_radius * 3.0))
+        if self.cell_divs < 1:
+            self.cell_divs = 1
+        
+        # 重新分配 Cell List 数组
+        num_cells = self.cell_divs ** 3
+        self._head = np.full(num_cells, -1, dtype=np.int32)
+        self._next_particle = np.full(self.max_particles, -1, dtype=np.int32)
+        
+        print(f'[Physics] Box size updated: {old_box_size:.1f} -> {new_box_size:.1f}, cell_divs={self.cell_divs}')
 
 
 # ============================================================================
@@ -312,6 +410,10 @@ def simulation_loop():
     target_fps = 30  # 降低到30FPS减少推送频率
     frame_time = 1.0 / target_fps
     
+    # 性能监控
+    perf_samples = []
+    perf_report_interval = 100  # 每100帧报告一次
+    
     while True:
         start_time = time.perf_counter()
         
@@ -320,16 +422,44 @@ def simulation_loop():
                 time.sleep(0.1)
                 continue
             
-            # 每帧10步物理更新
+            # 1. 物理更新计时
+            t_physics_start = time.perf_counter()
             steps_per_frame = 10
             for _ in range(steps_per_frame):
                 physics_engine.update()
+            t_physics_end = time.perf_counter()
             
-            # 获取状态并推送
+            # 2. 状态获取计时
+            t_state_start = time.perf_counter()
             state = physics_engine.get_state()
+            t_state_end = time.perf_counter()
         
-        # 推送到所有客户端
+        # 3. 网络推送计时
+        t_emit_start = time.perf_counter()
         socketio.emit('state_update', state)
+        t_emit_end = time.perf_counter()
+        
+        # 记录性能数据
+        perf_samples.append({
+            'physics': (t_physics_end - t_physics_start) * 1000,  # ms
+            'state': (t_state_end - t_state_start) * 1000,
+            'emit': (t_emit_end - t_emit_start) * 1000,
+            'particles': len(state.get('particles', [])),
+        })
+        
+        # 定期输出性能报告
+        if len(perf_samples) >= perf_report_interval:
+            avg_physics = sum(s['physics'] for s in perf_samples) / len(perf_samples)
+            avg_state = sum(s['state'] for s in perf_samples) / len(perf_samples)
+            avg_emit = sum(s['emit'] for s in perf_samples) / len(perf_samples)
+            avg_particles = sum(s['particles'] for s in perf_samples) / len(perf_samples)
+            total = avg_physics + avg_state + avg_emit
+            
+            print(f"[PERF] 物理: {avg_physics:.2f}ms ({avg_physics/total*100:.0f}%) | "
+                  f"状态: {avg_state:.2f}ms ({avg_state/total*100:.0f}%) | "
+                  f"推送: {avg_emit:.2f}ms ({avg_emit/total*100:.0f}%) | "
+                  f"总计: {total:.2f}ms | 粒子数: {avg_particles:.0f}")
+            perf_samples.clear()
         
         # 精确帧时间控制
         elapsed = time.perf_counter() - start_time
@@ -484,6 +614,14 @@ def handle_update_config(data: Dict[str, Any]):
             physics_engine = PhysicsEngineAdapter(runtime_config)
             state = physics_engine.get_state()
             emit('state_update', state, broadcast=True)
+    
+    # 容器体积更新（热更新，支持预览）
+    if 'boxSize' in data and physics_engine is not None:
+        with simulation_lock:
+            physics_engine.update_box_size(runtime_config.box_size)
+            if not simulation_running:
+                state = physics_engine.get_state()
+                emit('state_update', state, broadcast=True)
     
     # 如果物理引擎已存在，热更新配置参数
     if physics_engine is not None and not is_temperature_only:
